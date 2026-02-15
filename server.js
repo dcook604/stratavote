@@ -41,7 +41,7 @@ if (process.env.SESSION_SECRET === 'super_secret_session_key_change_in_productio
 }
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3300;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 // Rate limiters

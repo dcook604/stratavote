@@ -38,8 +38,8 @@ cp .env.example .env
 ```env
 ADMIN_PASSWORD=your_secure_password
 SESSION_SECRET=your_random_secret_string
-BASE_URL=http://localhost:3000
-PORT=3000
+BASE_URL=http://localhost:3300
+PORT=3300
 ```
 
 ## Running the Application
@@ -49,13 +49,13 @@ Start the server:
 npm start
 ```
 
-The application will be available at `http://localhost:3000`
+The application will be available at `http://localhost:3300`
 
 ## Usage Guide
 
 ### 1. Admin Login
 
-Navigate to `http://localhost:3000/admin/login` and enter your admin password.
+Navigate to `http://localhost:3300/admin/login` and enter your admin password.
 
 ### 2. Create a Motion
 
@@ -137,7 +137,7 @@ Stores submitted votes with timestamps and optional IP hashing.
 
 ### Optional
 
-- `BASE_URL`: Base URL for generating voting links (default: http://localhost:3000)
+- `BASE_URL`: Base URL for generating voting links (default: http://localhost:3300)
 - `PORT`: Server port (default: 3000)
 - `IP_HASH_SALT`: Salt for IP address hashing (if not set, IPs are not stored)
 
@@ -188,7 +188,7 @@ This application includes comprehensive security protections:
    ADMIN_PASSWORD=<your-strong-password-min-20-chars>
    SESSION_SECRET=<output-from-openssl-command>
    BASE_URL=https://vote.yourdomain.com
-   PORT=3000
+   PORT=3300
    LOG_LEVEL=info
    IP_HASH_SALT=<random-hex-string-for-ip-hashing>
    ```
@@ -232,7 +232,7 @@ server {
     ssl_prefer_server_ciphers on;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:3300;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';

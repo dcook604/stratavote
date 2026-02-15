@@ -24,8 +24,8 @@ This guide will walk you through deploying the Strata Vote application to Coolif
 - Coolify will automatically detect the `Dockerfile` in the repository
 - No additional build configuration needed
 
-**Port:** `3000`
-- The application listens on port 3000
+**Port:** `3300`
+- The application listens on port 3300
 - Coolify will automatically expose this port
 
 ### Step 3: Set Environment Variables
@@ -44,7 +44,7 @@ SESSION_SECRET=<generate-with-openssl-rand-base64-32>
 
 ```
 BASE_URL=https://vote.yourdomain.com
-PORT=3000
+PORT=3300
 LOG_LEVEL=info
 IP_HASH_SALT=<random-hex-string>
 ```
@@ -91,7 +91,7 @@ Coolify automatically handles volumes, but verify these paths are persisted:
 2. Enable health checks
 3. Configure:
    - **Path:** `/health`
-   - **Port:** `3000`
+   - **Port:** `3300`
    - **Interval:** `30s`
    - **Timeout:** `3s`
    - **Retries:** `3`
@@ -127,7 +127,7 @@ The application provides two health check endpoints:
 3. **Run Smoke Test** (from your local machine):
    ```bash
    # Update smoke-test.sh to use your domain
-   sed -i 's|http://localhost:3000|https://vote.yourdomain.com|g' smoke-test.sh
+   sed -i 's|http://localhost:3300|https://vote.yourdomain.com|g' smoke-test.sh
 
    # Update password in script to match ADMIN_PASSWORD
    sed -i 's|dev_admin_password_at_least_20_characters|YOUR_PASSWORD|g' smoke-test.sh
@@ -233,12 +233,12 @@ docker exec <container-name> sqlite3 /app/data.sqlite "PRAGMA journal_mode;"
 
 **Test health endpoint manually:**
 ```bash
-docker exec <container-name> wget -qO- http://localhost:3000/health
+docker exec <container-name> wget -qO- http://localhost:3300/health
 ```
 
 **Check if app is listening:**
 ```bash
-docker exec <container-name> netstat -tlnp | grep 3000
+docker exec <container-name> netstat -tlnp | grep 3300
 ```
 
 ### Session/Login Issues
@@ -350,7 +350,7 @@ Create multiple applications in Coolify for different environments:
 |---------|------------|
 | Repository | https://github.com/dcook604/stratavote.git |
 | Build Type | Dockerfile |
-| Port | 3000 |
+| Port | 3300 |
 | Health Check | /health or /healthz |
 | Admin Login | /admin/login |
 | Database Path | /app/data.sqlite |
