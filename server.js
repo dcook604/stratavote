@@ -16,6 +16,7 @@ const {
   submitVote,
   getMotionStats
 } = require('./db');
+const { isEmailConfigured, sendVotingLink } = require('./email');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -500,7 +501,7 @@ app.get('/admin/motions/:id/tokens', requireAuth, (req, res) => {
 });
 
 // Generate tokens
-app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), (req, res) => {
+app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), async (req, res) => {
   const { id } = req.params;
   const { recipients } = req.body;
 
@@ -508,8 +509,17 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), (req
     return res.redirect(`/admin/motions/${id}/tokens?error=No+recipients+provided`);
   }
 
+  const motion = motionQueries.getById.get(id);
+  if (!motion) {
+    return res.redirect(`/admin/motions/${id}/tokens?error=Motion+not+found`);
+  }
+
   const lines = recipients.split('\n').map(line => line.trim()).filter(line => line);
   let created = 0;
+  let emailsSent = 0;
+  let emailsFailed = 0;
+
+  const emailConfigured = isEmailConfigured();
 
   try {
     for (const line of lines) {
@@ -521,11 +531,72 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), (req
       const token = crypto.randomBytes(24).toString('base64url');
       const created_at = new Date().toISOString();
 
-      tokenQueries.create.run(id, token, name, email, unit, 'Active', created_at);
+      // Create token with email status fields
+      const result = tokenQueries.create.run(
+        id,
+        token,
+        name,
+        email,
+        unit,
+        'Active',
+        created_at,
+        0, // email_sent
+        null, // email_sent_at
+        null // email_error
+      );
       created++;
+
+      // Try to send email if configured and email address is provided
+      if (emailConfigured && email) {
+        const votingLink = `${BASE_URL}/vote/${id}?token=${token}`;
+
+        try {
+          const emailResult = await sendVotingLink(name, email, votingLink, motion);
+
+          if (emailResult.success) {
+            // Update token with email sent status
+            tokenQueries.updateEmailStatus.run(
+              1, // email_sent = true
+              new Date().toISOString(), // email_sent_at
+              null, // email_error
+              result.lastInsertRowid
+            );
+            emailsSent++;
+          } else {
+            // Update token with email error
+            tokenQueries.updateEmailStatus.run(
+              0, // email_sent = false
+              null, // email_sent_at
+              emailResult.error || 'Unknown error', // email_error
+              result.lastInsertRowid
+            );
+            emailsFailed++;
+          }
+        } catch (emailErr) {
+          logger.error('Email send error:', emailErr);
+          tokenQueries.updateEmailStatus.run(
+            0,
+            null,
+            emailErr.message,
+            result.lastInsertRowid
+          );
+          emailsFailed++;
+        }
+      }
     }
 
-    res.redirect(`/admin/motions/${id}/tokens?success=Created+${created}+token(s)`);
+    // Build success message
+    let message = `Created ${created} token(s)`;
+    if (emailConfigured) {
+      message += `. Sent ${emailsSent} email(s)`;
+      if (emailsFailed > 0) {
+        message += `, ${emailsFailed} failed`;
+      }
+    } else {
+      message += `. Email not configured - please copy links manually`;
+    }
+
+    res.redirect(`/admin/motions/${id}/tokens?success=${encodeURIComponent(message)}`);
   } catch (err) {
     logger.error('Token creation error:', err);
     res.redirect(`/admin/motions/${id}/tokens?error=Failed+to+create+tokens`);
@@ -547,6 +618,70 @@ app.post('/admin/tokens/:tokenId/revoke', requireAuth, (req, res) => {
   } catch (err) {
     logger.error('Token revoke error:', err);
     res.status(500).send('Failed to revoke token');
+  }
+});
+
+// Resend email for a token
+app.post('/admin/tokens/:tokenId/resend-email', requireAuth, async (req, res) => {
+  const { tokenId } = req.params;
+
+  try {
+    const token = tokenQueries.getById.get(tokenId);
+    if (!token) {
+      return res.status(404).send('Token not found');
+    }
+
+    if (token.status !== 'Active') {
+      return res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Can+only+resend+for+active+tokens`);
+    }
+
+    if (!token.recipient_email) {
+      return res.redirect(`/admin/motions/${token.motion_id}/tokens?error=No+email+address+for+this+token`);
+    }
+
+    if (!isEmailConfigured()) {
+      return res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Email+not+configured`);
+    }
+
+    const motion = motionQueries.getById.get(token.motion_id);
+    if (!motion) {
+      return res.status(404).send('Motion not found');
+    }
+
+    const votingLink = `${BASE_URL}/vote/${token.motion_id}?token=${token.token}`;
+
+    const emailResult = await sendVotingLink(
+      token.recipient_name,
+      token.recipient_email,
+      votingLink,
+      motion
+    );
+
+    if (emailResult.success) {
+      tokenQueries.updateEmailStatus.run(
+        1, // email_sent = true
+        new Date().toISOString(), // email_sent_at
+        null, // email_error
+        tokenId
+      );
+      res.redirect(`/admin/motions/${token.motion_id}/tokens?success=Email+sent+successfully`);
+    } else {
+      tokenQueries.updateEmailStatus.run(
+        0, // email_sent = false
+        null, // email_sent_at
+        emailResult.error || 'Unknown error', // email_error
+        tokenId
+      );
+      res.redirect(`/admin/motions/${token.motion_id}/tokens?error=${encodeURIComponent('Failed to send email: ' + emailResult.error)}`);
+    }
+  } catch (err) {
+    logger.error('Email resend error:', err);
+    const token = tokenQueries.getById.get(tokenId);
+    if (token) {
+      res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Failed+to+send+email`);
+    } else {
+      res.status(500).send('Failed to resend email');
+    }
   }
 });
 

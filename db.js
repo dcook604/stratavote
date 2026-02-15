@@ -38,7 +38,10 @@ function initDatabase() {
       unit_number TEXT NULL,
       status TEXT NOT NULL CHECK(status IN ('Active', 'Used', 'Revoked')),
       used_at TEXT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      email_sent BOOLEAN DEFAULT 0,
+      email_sent_at TEXT NULL,
+      email_error TEXT NULL
     );
 
     CREATE TABLE IF NOT EXISTS ballots (
@@ -59,6 +62,25 @@ function initDatabase() {
   `;
 
   db.exec(schema);
+
+  // Migration: Add email tracking columns if they don't exist
+  try {
+    const tableInfo = db.pragma('table_info(voter_tokens)');
+    const hasEmailSent = tableInfo.some(col => col.name === 'email_sent');
+
+    if (!hasEmailSent) {
+      db.exec(`
+        ALTER TABLE voter_tokens ADD COLUMN email_sent BOOLEAN DEFAULT 0;
+        ALTER TABLE voter_tokens ADD COLUMN email_sent_at TEXT NULL;
+        ALTER TABLE voter_tokens ADD COLUMN email_error TEXT NULL;
+      `);
+      const logger = require('./logger');
+      logger.info('Added email tracking columns to voter_tokens table');
+    }
+  } catch (err) {
+    // Columns might already exist, ignore error
+  }
+
   const logger = require('./logger');
   logger.info('Database initialized at:', dbPath);
 }
@@ -87,8 +109,8 @@ const motionQueries = {
 // Prepared statements for voter tokens
 const tokenQueries = {
   create: db.prepare(`
-    INSERT INTO voter_tokens (motion_id, token, recipient_name, recipient_email, unit_number, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO voter_tokens (motion_id, token, recipient_name, recipient_email, unit_number, status, created_at, email_sent, email_sent_at, email_error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
 
   getByToken: db.prepare('SELECT * FROM voter_tokens WHERE token = ?'),
@@ -99,7 +121,13 @@ const tokenQueries = {
 
   markUsed: db.prepare('UPDATE voter_tokens SET status = ?, used_at = ? WHERE id = ?'),
 
-  revoke: db.prepare('UPDATE voter_tokens SET status = ? WHERE id = ?')
+  revoke: db.prepare('UPDATE voter_tokens SET status = ? WHERE id = ?'),
+
+  updateEmailStatus: db.prepare(`
+    UPDATE voter_tokens
+    SET email_sent = ?, email_sent_at = ?, email_error = ?
+    WHERE id = ?
+  `)
 };
 
 // Prepared statements for ballots

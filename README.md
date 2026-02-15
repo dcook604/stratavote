@@ -82,7 +82,7 @@ The motion will be created with status "Draft"
    ```
    Format: `Name,Email,Unit` (unit is optional)
 4. Click "Generate Tokens"
-5. Copy the generated voting links and send them to voters via email
+5. If email is configured, voting links will be sent automatically. Otherwise, copy the generated links and send them manually
 
 ### 4. Open Voting
 
@@ -138,8 +138,76 @@ Stores submitted votes with timestamps and optional IP hashing.
 ### Optional
 
 - `BASE_URL`: Base URL for generating voting links (default: http://localhost:3300)
-- `PORT`: Server port (default: 3000)
+- `PORT`: Server port (default: 3300)
 - `IP_HASH_SALT`: Salt for IP address hashing (if not set, IPs are not stored)
+
+### Email Configuration (Optional)
+
+The application can automatically send voting links via email when tokens are generated. If email is not configured, voting links will be displayed in the admin interface for manual distribution.
+
+- `SMTP_HOST`: SMTP server hostname (e.g., smtp.gmail.com, smtp.office365.com)
+- `SMTP_PORT`: SMTP server port (default: 587 for TLS, 465 for SSL)
+- `SMTP_SECURE`: Set to `true` for SSL (port 465), `false` for TLS (port 587)
+- `SMTP_USER`: Email account username (usually your full email address)
+- `SMTP_PASSWORD`: Email account password or app-specific password
+- `SMTP_FROM_NAME`: Sender name displayed in emails (default: "Strata Council")
+- `SMTP_FROM_EMAIL`: Sender email address (default: same as SMTP_USER)
+
+#### Common Email Provider Examples
+
+**Gmail:**
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_NAME=Strata Council
+SMTP_FROM_EMAIL=your-email@gmail.com
+```
+*Note: Gmail requires an [App Password](https://support.google.com/accounts/answer/185833) instead of your regular password. Enable 2FA first, then generate an App Password.*
+
+**Microsoft Outlook/Office 365:**
+```env
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@outlook.com
+SMTP_PASSWORD=your-password
+SMTP_FROM_NAME=Strata Council
+SMTP_FROM_EMAIL=your-email@outlook.com
+```
+
+**SendGrid (SMTP):**
+```env
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=apikey
+SMTP_PASSWORD=your-sendgrid-api-key
+SMTP_FROM_NAME=Strata Council
+SMTP_FROM_EMAIL=noreply@yourdomain.com
+```
+
+**Mailgun (SMTP):**
+```env
+SMTP_HOST=smtp.mailgun.org
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=postmaster@your-domain.mailgun.org
+SMTP_PASSWORD=your-mailgun-smtp-password
+SMTP_FROM_NAME=Strata Council
+SMTP_FROM_EMAIL=noreply@your-domain.mailgun.org
+```
+
+#### Email Features
+
+- **Automatic Delivery**: Emails are sent automatically when tokens are generated
+- **Batch Processing**: Continues sending even if some emails fail
+- **Error Tracking**: Failed emails are logged and displayed in the admin interface
+- **Resend Capability**: Failed emails can be resent individually from the tokens page
+- **Professional Templates**: HTML emails with plain text fallbacks
+- **One-Time Links**: Each email contains a secure, single-use voting link
 
 ## Smoke Test
 
@@ -330,6 +398,8 @@ sudo journalctl -u strata-vote -f
 strata-vote/
 ├── server.js           # Express application
 ├── db.js              # Database initialization and queries
+├── email.js           # Email service with nodemailer
+├── logger.js          # Winston logger configuration
 ├── package.json       # Dependencies
 ├── .env               # Environment variables (not in git)
 ├── .env.example       # Environment template
@@ -345,8 +415,10 @@ strata-vote/
 │   ├── tokens.ejs
 │   └── partials/
 │       └── admin_header.ejs
-└── public/            # Static assets
-    └── styles.css
+├── public/            # Static assets
+│   └── styles.css
+├── logs/              # Application logs
+└── backups/           # Database backups
 ```
 
 ## Troubleshooting

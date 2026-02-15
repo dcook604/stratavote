@@ -54,6 +54,7 @@
                 <th>Email</th>
                 <th>Unit</th>
                 <th>Status</th>
+                <th>Email Status</th>
                 <th>Used At</th>
                 <th>Voting Link</th>
                 <th>Actions</th>
@@ -67,6 +68,17 @@
                   <td><%= token.unit_number || '-' %></td>
                   <td>
                     <span class="badge badge-<%= token.status.toLowerCase() %>"><%= token.status %></span>
+                  </td>
+                  <td>
+                    <% if (token.email_sent) { %>
+                      <span class="badge badge-success" title="Sent at <%= new Date(token.email_sent_at).toLocaleString() %>">✓ Sent</span>
+                    <% } else if (token.email_error) { %>
+                      <span class="badge badge-danger" title="<%= token.email_error %>">✗ Failed</span>
+                    <% } else if (token.recipient_email) { %>
+                      <span class="badge badge-secondary">Not Sent</span>
+                    <% } else { %>
+                      -
+                    <% } %>
                   </td>
                   <td>
                     <% if (token.used_at) { %>
@@ -94,6 +106,14 @@
                           Revoke
                         </button>
                       </form>
+                      <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
+                        <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email" style="display: inline; margin-left: 5px;">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                          <button type="submit" class="btn btn-primary btn-sm" title="Resend voting link email">
+                            📧 Resend
+                          </button>
+                        </form>
+                      <% } %>
                     <% } else { %>
                       -
                     <% } %>
