@@ -583,6 +583,36 @@ app.get('/admin/motions/:id/export.csv', requireAuth, (req, res) => {
   res.send(csv);
 });
 
+// Health check endpoints (for Coolify/Docker/monitoring)
+app.get('/health', (req, res) => {
+  try {
+    // Check database connection
+    const dbCheck = db.prepare('SELECT 1').get();
+
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: dbCheck ? 'connected' : 'disconnected',
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
+      }
+    });
+  } catch (err) {
+    logger.error('Health check failed:', err);
+    res.status(503).json({
+      status: 'unhealthy',
+      error: 'Database connection failed'
+    });
+  }
+});
+
+// Simple health check (for load balancers)
+app.get('/healthz', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // Start server
 const server = app.listen(PORT, () => {
   logger.info(`Strata Vote server running at ${BASE_URL}`);

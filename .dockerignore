@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Database
+data.sqlite
+data.sqlite-*
+
+# Logs
+logs/
+*.log
+
+# Backups
+backups/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+
+# Documentation (included in image)
+# README.md
+# COOLIFY.md
+
+# Testing (not needed in production)
+.npm/
+coverage/
+.nyc_output/
+
+# Misc
+*.md.backup
+tmp/
+temp/

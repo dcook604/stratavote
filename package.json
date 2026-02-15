@@ -5,7 +5,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "NODE_ENV=development node server.js",
+    "test": "bash smoke-test.sh",
+    "docker:build": "docker build -t stratavote .",
+    "docker:run": "docker-compose up -d",
+    "docker:stop": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "backup": "bash scripts/backup.sh"
   },
   "keywords": [
     "voting",
