@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voter Tokens - <%= motion.title %></title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Voter Tokens</h1>
+      <a href="/admin/motions/<%= motion.id %>" class="btn btn-secondary">Back to Motion</a>
+    </div>
+
+    <div class="card">
+      <h2><%= motion.title %></h2>
+      <p class="text-muted">Manage voting links for this motion</p>
+    </div>
+
+    <% if (success) { %>
+      <div class="alert alert-success"><%= success %></div>
+    <% } %>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <div class="card">
+      <h3>Generate New Tokens</h3>
+      <form method="POST" action="/admin/motions/<%= motion.id %>/tokens">
+        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+        <div class="form-group">
+          <label for="recipients">Recipients (one per line)</label>
+          <textarea id="recipients" name="recipients" rows="8" required placeholder="John Doe,john@example.com,Unit 101&#10;Jane Smith,jane@example.com,Unit 102&#10;Bob Wilson,bob@example.com"></textarea>
+          <small>Format: Name,Email,Unit (unit is optional)</small>
+        </div>
+        <button type="submit" class="btn btn-primary">Generate Tokens</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Existing Tokens (<%= tokens.length %>)</h3>
+
+      <% if (tokens.length === 0) { %>
+        <p class="text-muted">No tokens generated yet.</p>
+      <% } else { %>
+        <div class="table-responsive">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Unit</th>
+                <th>Status</th>
+                <th>Used At</th>
+                <th>Voting Link</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% tokens.forEach(token => { %>
+                <tr>
+                  <td><%= token.recipient_name || '-' %></td>
+                  <td><%= token.recipient_email || '-' %></td>
+                  <td><%= token.unit_number || '-' %></td>
+                  <td>
+                    <span class="badge badge-<%= token.status.toLowerCase() %>"><%= token.status %></span>
+                  </td>
+                  <td>
+                    <% if (token.used_at) { %>
+                      <%= new Date(token.used_at).toLocaleString() %>
+                    <% } else { %>
+                      -
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (token.status === 'Active') { %>
+                      <input type="text"
+                             value="<%= baseUrl %>/vote/<%= motion.id %>?token=<%= token.token %>"
+                             class="link-input"
+                             readonly
+                             onclick="this.select()">
+                    <% } else { %>
+                      -
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (token.status === 'Active') { %>
+                      <form method="POST" action="/admin/tokens/<%= token.id %>/revoke" style="display: inline;">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">
+                          Revoke
+                        </button>
+                      </form>
+                    <% } else { %>
+                      -
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</body>
+</html>

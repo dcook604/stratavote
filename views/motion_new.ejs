@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Motion - Strata Vote Admin</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Create New Motion</h1>
+      <a href="/admin/dashboard" class="btn btn-secondary">Cancel</a>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error">
+        <%= error %>
+      </div>
+    <% } %>
+
+    <form method="POST" action="/admin/motions" class="form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+      <div class="form-group">
+        <label for="title">Motion Title *</label>
+        <input type="text" id="title" name="title" required placeholder="e.g., Approve 2024 Budget">
+      </div>
+
+      <div class="form-group">
+        <label for="description">Description *</label>
+        <textarea id="description" name="description" rows="5" required placeholder="Provide details about the motion..."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="options">Voting Options</label>
+        <input type="text" id="options" name="options" placeholder="Yes, No, Abstain">
+        <small>Comma-separated list. Default: Yes, No, Abstain</small>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="open_at">Voting Opens At *</label>
+          <input type="datetime-local" id="open_at" name="open_at" required>
+        </div>
+
+        <div class="form-group">
+          <label for="close_at">Voting Closes At *</label>
+          <input type="datetime-local" id="close_at" name="close_at" required>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="required_majority">Required Majority *</label>
+        <select id="required_majority" name="required_majority" required>
+          <option value="Simple">Simple Majority (> 50%)</option>
+          <option value="TwoThirds">Two-Thirds Majority (≥ 66.67%)</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Create Motion</button>
+    </form>
+  </div>
+</body>
+</html>

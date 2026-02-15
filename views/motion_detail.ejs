@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= motion.title %> - Strata Vote Admin</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1><%= motion.title %></h1>
+      <a href="/admin/dashboard" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+
+    <% if (success) { %>
+      <div class="alert alert-success"><%= success %></div>
+    <% } %>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <div class="detail-grid">
+      <div class="detail-main">
+        <div class="card">
+          <h2>Motion Details</h2>
+
+          <div class="detail-row">
+            <strong>Status:</strong>
+            <span class="badge badge-<%= motion.status.toLowerCase() %>"><%= motion.status %></span>
+          </div>
+
+          <div class="detail-row">
+            <strong>Description:</strong>
+            <p><%= motion.description %></p>
+          </div>
+
+          <div class="detail-row">
+            <strong>Voting Period:</strong>
+            <p>
+              <strong>Opens:</strong> <%= new Date(motion.open_at).toLocaleString() %><br>
+              <strong>Closes:</strong> <%= new Date(motion.close_at).toLocaleString() %>
+            </p>
+          </div>
+
+          <div class="detail-row">
+            <strong>Options:</strong>
+            <p><%= motion.options.join(', ') %></p>
+          </div>
+
+          <div class="detail-row">
+            <strong>Required Majority:</strong>
+            <p><%= motion.required_majority === 'Simple' ? 'Simple Majority (> 50%)' : 'Two-Thirds Majority (≥ 66.67%)' %></p>
+          </div>
+
+          <% if (motion.outcome) { %>
+            <div class="detail-row">
+              <strong>Outcome:</strong>
+              <span class="badge badge-outcome"><%= motion.outcome %></span>
+            </div>
+          <% } %>
+
+          <% if (motion.outcome_notes) { %>
+            <div class="detail-row">
+              <strong>Outcome Notes:</strong>
+              <p><%= motion.outcome_notes %></p>
+            </div>
+          <% } %>
+        </div>
+
+        <div class="card">
+          <h2>Voting Results</h2>
+
+          <div class="stats-row">
+            <div class="stat-box">
+              <div class="stat-value"><%= stats.eligible %></div>
+              <div class="stat-label">Eligible Voters</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value"><%= stats.voted %></div>
+              <div class="stat-label">Votes Cast</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value"><%= stats.remaining %></div>
+              <div class="stat-label">Remaining</div>
+            </div>
+            <% if (stats.eligible > 0) { %>
+              <div class="stat-box">
+                <div class="stat-value"><%= Math.round((stats.voted / stats.eligible) * 100) %>%</div>
+                <div class="stat-label">Turnout</div>
+              </div>
+            <% } %>
+          </div>
+
+          <% if (stats.results.length > 0) { %>
+            <h3>Vote Breakdown</h3>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Choice</th>
+                  <th>Votes</th>
+                  <th>Percentage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% stats.results.forEach(result => { %>
+                  <tr>
+                    <td><strong><%= result.choice %></strong></td>
+                    <td><%= result.count %></td>
+                    <td>
+                      <% if (stats.voted > 0) { %>
+                        <%= Math.round((result.count / stats.voted) * 100) %>%
+                      <% } else { %>
+                        0%
+                      <% } %>
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+
+            <a href="/admin/motions/<%= motion.id %>/export.csv"
+               class="btn btn-secondary"
+               onclick="return confirm('This export contains personal information (names, emails). Ensure you handle it securely. Continue?')">
+              Export Ballots (CSV)
+            </a>
+          <% } else { %>
+            <p class="text-muted">No votes cast yet.</p>
+          <% } %>
+        </div>
+      </div>
+
+      <div class="detail-sidebar">
+        <div class="card">
+          <h3>Actions</h3>
+
+          <form method="POST" action="/admin/motions/<%= motion.id %>/status" style="margin-bottom: 1rem;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+            <label for="status"><strong>Change Status:</strong></label>
+            <select id="status" name="status" class="form-control">
+              <option value="Draft" <%= motion.status === 'Draft' ? 'selected' : '' %>>Draft</option>
+              <option value="Open" <%= motion.status === 'Open' ? 'selected' : '' %>>Open</option>
+              <option value="Closed" <%= motion.status === 'Closed' ? 'selected' : '' %>>Closed</option>
+              <option value="Published" <%= motion.status === 'Published' ? 'selected' : '' %>>Published</option>
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm" style="margin-top: 0.5rem;">Update Status</button>
+          </form>
+
+          <a href="/admin/motions/<%= motion.id %>/tokens" class="btn btn-secondary btn-block">
+            Manage Voter Tokens
+          </a>
+        </div>
+
+        <div class="card">
+          <h3>Set Outcome</h3>
+          <form method="POST" action="/admin/motions/<%= motion.id %>/outcome">
+            <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+            <div class="form-group">
+              <label for="outcome">Outcome:</label>
+              <select id="outcome" name="outcome" class="form-control">
+                <option value="">-- None --</option>
+                <option value="Passed" <%= motion.outcome === 'Passed' ? 'selected' : '' %>>Passed</option>
+                <option value="Failed" <%= motion.outcome === 'Failed' ? 'selected' : '' %>>Failed</option>
+                <option value="Tie" <%= motion.outcome === 'Tie' ? 'selected' : '' %>>Tie</option>
+                <option value="Cancelled" <%= motion.outcome === 'Cancelled' ? 'selected' : '' %>>Cancelled</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="outcome_notes">Notes:</label>
+              <textarea id="outcome_notes" name="outcome_notes" rows="3" class="form-control"><%= motion.outcome_notes || '' %></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-sm">Save Outcome</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

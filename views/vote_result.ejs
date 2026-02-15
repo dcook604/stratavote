@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vote Result - Strata Vote</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="vote-card">
+      <h1>Vote Result</h1>
+
+      <% if (success) { %>
+        <div class="alert alert-success">
+          ✓ <%= message %>
+        </div>
+      <% } else { %>
+        <div class="alert alert-error">
+          ✗ <%= message %>
+        </div>
+      <% } %>
+
+      <p class="text-center">
+        You may now close this window.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cast Your Vote - Strata Vote</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="vote-card">
+      <h1>Strata Council Vote</h1>
+
+      <% if (error) { %>
+        <div class="alert alert-error">
+          <%= error %>
+        </div>
+      <% } else if (motion && token) { %>
+        <div class="motion-info">
+          <h2><%= motion.title %></h2>
+          <p class="description"><%= motion.description %></p>
+
+          <div class="meta">
+            <p><strong>Voting closes:</strong> <%= new Date(motion.close_at).toLocaleString() %></p>
+          </div>
+        </div>
+
+        <form method="POST" action="/vote/<%= motion.id %>" class="vote-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+          <input type="hidden" name="token" value="<%= token.token %>">
+
+          <h3>Select your vote:</h3>
+
+          <div class="vote-options">
+            <% motion.options.forEach(option => { %>
+              <button type="submit" name="choice" value="<%= option %>" class="vote-button">
+                <%= option %>
+              </button>
+            <% }) %>
+          </div>
+        </form>
+
+        <p class="privacy-note">
+          Your vote is anonymous and will be recorded securely. This link can only be used once.
+        </p>
+      <% } %>
+    </div>
+  </div>
+</body>
+</html>
