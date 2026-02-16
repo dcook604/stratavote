@@ -578,22 +578,32 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
   });
 
   if (password === process.env.ADMIN_PASSWORD) {
-    req.session.isAdmin = true;
-
-    // Save session explicitly and log result
-    req.session.save((err) => {
+    // Regenerate session to prevent session fixation attacks
+    // and ensure a fresh session cookie is sent
+    req.session.regenerate((err) => {
       if (err) {
-        logger.error('Session save error', { error: err, sessionID: req.sessionID });
+        logger.error('Session regeneration error', { error: err.message, sessionID: req.sessionID });
         return res.render('admin_login', { error: 'Session error. Please try again.' });
       }
 
-      logger.info('Login successful', {
-        sessionID: req.sessionID,
-        isAdmin: req.session.isAdmin,
-        cookie: req.session.cookie
-      });
+      // Set admin flag on the NEW session
+      req.session.isAdmin = true;
 
-      return res.redirect('/admin/dashboard');
+      // Save the session explicitly
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          logger.error('Session save error', { error: saveErr.message, sessionID: req.sessionID });
+          return res.render('admin_login', { error: 'Session error. Please try again.' });
+        }
+
+        logger.info('Login successful', {
+          sessionID: req.sessionID,
+          isAdmin: req.session.isAdmin,
+          cookie: req.session.cookie
+        });
+
+        return res.redirect('/admin/dashboard');
+      });
     });
   } else {
     logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
