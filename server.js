@@ -283,22 +283,36 @@ app.use(express.json());
 const persistentDir = path.join(__dirname, 'persistent');
 const sessionDir = fs.existsSync(persistentDir) ? persistentDir : __dirname;
 
+// Ensure directory exists and is writable
+if (!fs.existsSync(sessionDir)) {
+  fs.mkdirSync(sessionDir, { recursive: true, mode: 0o755 });
+  logger.info('Created session directory', { directory: sessionDir });
+}
+
 logger.info('Session store configuration', {
   directory: sessionDir,
-  isPersistent: fs.existsSync(persistentDir)
+  isPersistent: fs.existsSync(persistentDir),
+  dbPath: path.join(sessionDir, 'sessions.db')
+});
+
+// Create SQLite store with error handling
+const sqliteStore = new SQLiteStore({
+  db: 'sessions.db',
+  dir: sessionDir,
+  table: 'sessions',
+  concurrentDB: true
+});
+
+// Log SQLite store errors
+sqliteStore.on('error', (err) => {
+  logger.error('SQLite session store error:', err);
 });
 
 app.use(session({
-  store: new SQLiteStore({
-    db: 'sessions.db',
-    dir: sessionDir,
-    table: 'sessions',
-    // Clean up expired sessions every hour
-    concurrentDB: true
-  }),
+  store: sqliteStore,
   secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true, // Changed to true to ensure sessions are saved
   name: 'strata.sid',
   proxy: true, // Trust the reverse proxy for secure cookie handling
   cookie: {
