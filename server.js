@@ -600,32 +600,40 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
   });
 
   if (password === process.env.ADMIN_PASSWORD) {
-    // Set admin flag on EXISTING session (no regenerate - that was causing cookie issues)
-    req.session.isAdmin = true;
-
-    // Force session to be modified so it gets saved
-    req.session.touch();
-
-    // Save the session explicitly and wait for completion
-    req.session.save((saveErr) => {
-      if (saveErr) {
-        logger.error('Session save error', { error: saveErr.message, sessionID: req.sessionID });
+    // Regenerate session to prevent session fixation attacks
+    req.session.regenerate((err) => {
+      if (err) {
+        logger.error('Session regeneration error', { error: err.message, sessionID: req.sessionID });
         return res.render('admin_login', { error: 'Session error. Please try again.' });
       }
 
-      logger.info('Login successful - about to redirect', {
-        sessionID: req.sessionID,
-        sessionKeys: Object.keys(req.session),
-        isAdmin: req.session.isAdmin,
-        isAdminType: typeof req.session.isAdmin,
-        cookieSecure: req.session.cookie.secure,
-        cookieSameSite: req.session.cookie.sameSite,
-        cookiePath: req.session.cookie.path,
-        redirectTo: '/admin/dashboard'
-      });
+      // Set admin flag on the NEW regenerated session
+      req.session.isAdmin = true;
 
-      // Redirect to dashboard - browser should receive Set-Cookie with Secure flag
-      return res.redirect('/admin/dashboard');
+      // Explicitly save the session to SQLite store
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          logger.error('Session save error', { error: saveErr.message, sessionID: req.sessionID });
+          return res.render('admin_login', { error: 'Session error. Please try again.' });
+        }
+
+        // CRITICAL DEBUG: Log exactly what we saved
+        logger.info('Login successful - session saved', {
+          sessionID: req.sessionID,
+          sessionKeys: Object.keys(req.session),
+          isAdmin: req.session.isAdmin,
+          isAdminType: typeof req.session.isAdmin,
+          isAdminValue: String(req.session.isAdmin),
+          cookieSecure: req.session.cookie.secure,
+          cookieSameSite: req.session.cookie.sameSite,
+          cookiePath: req.session.cookie.path,
+          storeType: 'SQLiteStore',
+          redirectTo: '/admin/dashboard'
+        });
+
+        // NOW redirect - session is saved to disk
+        return res.redirect('/admin/dashboard');
+      });
     });
   } else {
     logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
