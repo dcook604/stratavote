@@ -755,14 +755,27 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next)
       willRedirectTo: '/admin/dashboard'
     });
 
-    // RELATIVE redirect (no absolute URL with localhost!)
-    logger.info('LOGIN REDIRECT', {
+    // CLIENT-SIDE REDIRECT instead of 302 to ensure cookie is accepted first
+    // Browser was not following 302 redirect correctly with new cookie
+    logger.info('LOGIN SUCCESS - Using client-side redirect', {
       from: req.originalUrl,
       to: '/admin/dashboard',
-      method: 'relative'
+      method: 'meta-refresh'
     });
 
-    return res.redirect(302, '/admin/dashboard');
+    return res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta http-equiv="refresh" content="0;url=/admin/dashboard">
+        <title>Login Successful</title>
+      </head>
+      <body>
+        <p>Login successful! Redirecting to dashboard...</p>
+        <script>window.location.href = '/admin/dashboard';</script>
+      </body>
+      </html>
+    `);
   });
 });
 
