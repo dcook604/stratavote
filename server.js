@@ -319,6 +319,24 @@ logger.info('Session middleware configured', {
   trustProxy: true
 });
 
+// CRITICAL FIX: Override cookie SameSite on every response
+// express-session 1.19.0 seems to ignore sameSite:'lax' and uses 'strict' instead
+app.use((req, res, next) => {
+  const originalSetHeader = res.setHeader.bind(res);
+  res.setHeader = function(name, value) {
+    if (name.toLowerCase() === 'set-cookie') {
+      // Force SameSite=Lax instead of Strict
+      if (typeof value === 'string') {
+        value = value.replace(/SameSite=Strict/gi, 'SameSite=Lax');
+      } else if (Array.isArray(value)) {
+        value = value.map(v => v.replace(/SameSite=Strict/gi, 'SameSite=Lax'));
+      }
+    }
+    return originalSetHeader(name, value);
+  };
+  next();
+});
+
 // GLOBAL HTTP LOGGER - Logs ALL requests with session details
 app.use((req, res, next) => {
   const start = Date.now();
@@ -343,8 +361,11 @@ app.use((req, res, next) => {
 
     // Parse Set-Cookie to show details (not the actual value for security)
     let cookieInfo = 'none';
+    let rawCookieForDebug = 'none';
     if (setCookieRaw) {
       const cookieStr = Array.isArray(setCookieRaw) ? setCookieRaw[0] : setCookieRaw;
+      // Log the FULL raw cookie to diagnose SameSite mismatch
+      rawCookieForDebug = cookieStr;
       const parts = cookieStr.split(';').map(p => p.trim());
       const name = parts[0].split('=')[0];
       const flags = parts.slice(1).join('; ');
@@ -361,6 +382,7 @@ app.use((req, res, next) => {
       isAdmin: req.session?.isAdmin,
       setCookieHeader: !!setCookieRaw,
       setCookieDetails: cookieInfo,
+      RAW_SET_COOKIE_HEADER: rawCookieForDebug, // DEBUG: full cookie to find SameSite issue
       location: res.getHeader('location') || 'none'
     });
   });
