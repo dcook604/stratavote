@@ -600,40 +600,53 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
   });
 
   if (password === process.env.ADMIN_PASSWORD) {
-    // Regenerate session to prevent session fixation attacks
-    req.session.regenerate((err) => {
-      if (err) {
-        logger.error('Session regeneration error', { error: err.message, sessionID: req.sessionID });
+    const oldSessionID = req.sessionID;
+
+    logger.info('BEFORE setting isAdmin', {
+      sessionID: oldSessionID,
+      sessionKeys: Object.keys(req.session),
+      hasIsAdmin: 'isAdmin' in req.session
+    });
+
+    // DO NOT REGENERATE - it breaks cookie persistence with SQLiteStore
+    // Just set isAdmin on existing session
+    req.session.isAdmin = true;
+
+    logger.info('AFTER setting isAdmin, BEFORE save', {
+      sessionID: req.sessionID,
+      sessionKeys: Object.keys(req.session),
+      isAdmin: req.session.isAdmin,
+      sessionIDChanged: req.sessionID !== oldSessionID
+    });
+
+    // Explicitly save the session to SQLite store
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        logger.error('Session save error', {
+          error: saveErr.message,
+          stack: saveErr.stack,
+          sessionID: req.sessionID
+        });
         return res.render('admin_login', { error: 'Session error. Please try again.' });
       }
 
-      // Set admin flag on the NEW regenerated session
-      req.session.isAdmin = true;
-
-      // Explicitly save the session to SQLite store
-      req.session.save((saveErr) => {
-        if (saveErr) {
-          logger.error('Session save error', { error: saveErr.message, sessionID: req.sessionID });
-          return res.render('admin_login', { error: 'Session error. Please try again.' });
-        }
-
-        // CRITICAL DEBUG: Log exactly what we saved
-        logger.info('Login successful - session saved', {
-          sessionID: req.sessionID,
-          sessionKeys: Object.keys(req.session),
-          isAdmin: req.session.isAdmin,
-          isAdminType: typeof req.session.isAdmin,
-          isAdminValue: String(req.session.isAdmin),
-          cookieSecure: req.session.cookie.secure,
-          cookieSameSite: req.session.cookie.sameSite,
-          cookiePath: req.session.cookie.path,
-          storeType: 'SQLiteStore',
-          redirectTo: '/admin/dashboard'
-        });
-
-        // NOW redirect - session is saved to disk
-        return res.redirect('/admin/dashboard');
+      // CRITICAL: Log what we ACTUALLY saved
+      logger.info('AFTER save callback - session saved to SQLite', {
+        sessionID: req.sessionID,
+        sessionKeys: Object.keys(req.session),
+        isAdmin: req.session.isAdmin,
+        isAdminType: typeof req.session.isAdmin,
+        isAdminValue: String(req.session.isAdmin),
+        cookieSecure: req.session.cookie.secure,
+        cookieSameSite: req.session.cookie.sameSite,
+        cookiePath: req.session.cookie.path,
+        cookieExpires: req.session.cookie.expires,
+        storeType: 'SQLiteStore',
+        redirectTo: '/admin/dashboard'
       });
+
+      // NOW redirect - session is saved to disk
+      return res.redirect('/admin/dashboard');
     });
   } else {
     logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
@@ -649,6 +662,14 @@ app.post('/admin/logout', (req, res) => {
 
 // Dashboard
 app.get('/admin/dashboard', requireAuth, (req, res) => {
+  // CRITICAL: Log session state when dashboard loads
+  logger.info('Dashboard loaded - session state', {
+    sessionID: req.sessionID,
+    sessionKeys: Object.keys(req.session),
+    isAdmin: req.session.isAdmin,
+    hasIsAdmin: 'isAdmin' in req.session,
+    sessionCookie: req.session.cookie
+  });
   const { start_date, end_date } = req.query;
 
   let motions;
