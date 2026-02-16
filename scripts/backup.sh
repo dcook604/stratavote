@@ -4,7 +4,7 @@
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
-DB_FILE="${DB_FILE:-./data/data.sqlite}"
+DB_FILE="${DB_FILE:-./data.sqlite}"
 
 mkdir -p "$BACKUP_DIR"
 

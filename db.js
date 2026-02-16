@@ -1,30 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
-const fs = require('fs');
 
-// Ensure data directory exists with proper error handling
-const dataDir = path.join(__dirname, 'data');
-try {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true, mode: 0o775 });
-  }
-  // Verify directory is writable
-  fs.accessSync(dataDir, fs.constants.W_OK);
-} catch (err) {
-  console.error('Failed to create or access data directory:', err);
-  console.error('Data directory path:', dataDir);
-  console.error('Current user:', process.env.USER || 'unknown');
-  // Log permissions
-  try {
-    const stats = fs.statSync(dataDir);
-    console.error('Directory permissions:', stats.mode.toString(8));
-  } catch (e) {
-    console.error('Could not stat directory');
-  }
-  throw err;
-}
-
-const dbPath = path.join(dataDir, 'data.sqlite');
+// Use simple path - Coolify will handle persistence via volume mounting /app
+const dbPath = path.join(__dirname, 'data.sqlite');
 const db = new Database(dbPath);
 
 // Enable foreign keys

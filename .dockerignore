@@ -7,8 +7,7 @@ npm-debug.log*
 .env.local
 .env.*.local
 
-# Database and data directory
-data/
+# Database
 data.sqlite
 data.sqlite-*
 

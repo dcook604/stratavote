@@ -31,19 +31,14 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --chown=nodejs:nodejs . .
 
 # Create necessary directories with proper permissions
-# IMPORTANT: Must create and set permissions BEFORE switching to nodejs user
-RUN mkdir -p /app/data /app/logs /app/backups && \
+# The nodejs user needs write access to create database files and logs
+RUN mkdir -p logs backups && \
     chown -R nodejs:nodejs /app && \
-    chmod -R 775 /app && \
-    chmod -R 775 /app/data /app/logs /app/backups && \
+    chmod -R 755 /app && \
     (chmod +x scripts/backup.sh 2>/dev/null || true)
 
 # Switch to non-root user
 USER nodejs
-
-# Declare volumes for persistent storage AFTER user switch
-# These directories will be mounted from host at runtime
-VOLUME ["/app/data", "/app/logs", "/app/backups"]
 
 # Expose port (Coolify will map this)
 EXPOSE 3300
