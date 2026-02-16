@@ -310,18 +310,39 @@ logger.info('Session middleware configured', {
   trustProxy: true
 });
 
-// Debug middleware - log session state on every request
+// GLOBAL HTTP LOGGER - Logs ALL requests with session details
 app.use((req, res, next) => {
-  if (req.path.startsWith('/admin')) {
-    logger.info('Request', {
+  const start = Date.now();
+
+  // Log immediately when request arrives
+  logger.info('HTTP REQUEST', {
+    method: req.method,
+    path: req.originalUrl,
+    sessionID: req.sessionID,
+    sessionKeys: Object.keys(req.session || {}),
+    hasIsAdmin: 'isAdmin' in (req.session || {}),
+    isAdmin: req.session?.isAdmin,
+    hasCookieHeader: !!req.headers.cookie,
+    referer: req.headers.referer || 'none',
+    userAgent: req.get('user-agent')?.substring(0, 50)
+  });
+
+  // Log when response finishes
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info('HTTP RESPONSE', {
       method: req.method,
-      path: req.path,
+      path: req.originalUrl,
+      status: res.statusCode,
+      duration: `${duration}ms`,
       sessionID: req.sessionID,
-      hasSession: !!req.session,
+      sessionKeys: Object.keys(req.session || {}),
       isAdmin: req.session?.isAdmin,
-      cookies: req.headers.cookie ? 'present' : 'missing'
+      setCookieHeader: !!res.getHeader('set-cookie'),
+      location: res.getHeader('location') || 'none'
     });
-  }
+  });
+
   next();
 });
 
@@ -381,28 +402,34 @@ app.use((req, res, next) => {
 
 // Auth middleware
 function requireAuth(req, res, next) {
-  // CRITICAL DEBUG: Log EVERYTHING about the session
-  logger.info('Auth check', {
+  const hasIsAdmin = 'isAdmin' in (req.session || {});
+  const isAdminValue = req.session?.isAdmin;
+  const isAdminTruthy = !!isAdminValue;
+  const isAdminStrictTrue = isAdminValue === true;
+
+  logger.info('===> AUTH CHECK', {
     path: req.path,
     sessionID: req.sessionID,
-    hasSession: !!req.session,
     sessionKeys: Object.keys(req.session || {}),
-    isAdmin: req.session?.isAdmin,
-    isAdminType: typeof req.session?.isAdmin,
-    isAdminValue: String(req.session?.isAdmin),
-    hasCookie: !!req.headers.cookie,
-    cookieHeader: req.headers.cookie
+    hasIsAdmin: hasIsAdmin,
+    isAdmin: isAdminValue,
+    isAdminType: typeof isAdminValue,
+    isAdminTruthy: isAdminTruthy,
+    isAdminStrictTrue: isAdminStrictTrue,
+    willAllow: isAdminStrictTrue
   });
 
-  if (req.session.isAdmin) {
-    logger.info('Auth PASSED - allowing access');
+  if (req.session && req.session.isAdmin === true) {
+    logger.info('AUTH PASSED - Access granted');
     return next();
   }
 
-  logger.warn('Auth FAILED - redirecting to login', {
+  logger.warn('AUTH FAILED - Redirecting to login', {
     path: req.path,
     sessionID: req.sessionID,
-    reason: `isAdmin is ${req.session?.isAdmin}`
+    reason: hasIsAdmin
+      ? `isAdmin exists but is ${isAdminValue} (${typeof isAdminValue})`
+      : 'isAdmin not in session'
   });
 
   res.redirect('/admin/login');
@@ -569,89 +596,96 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 
 // Login page
 app.get('/admin/login', (req, res) => {
-  logger.info('Login page accessed', {
+  logger.info('===> ADMIN LOGIN PAGE (GET)', {
     sessionID: req.sessionID,
-    hasSession: !!req.session,
+    sessionKeys: Object.keys(req.session || {}),
+    hasIsAdmin: 'isAdmin' in (req.session || {}),
     isAdmin: req.session?.isAdmin,
     hasCookie: !!req.headers.cookie,
-    cookieNames: req.headers.cookie ? req.headers.cookie.split(';').map(c => c.trim().split('=')[0]) : []
+    willRedirect: !!req.session?.isAdmin
   });
 
   if (req.session.isAdmin) {
+    logger.info('Already logged in - redirecting to dashboard');
     return res.redirect('/admin/dashboard');
   }
+
   res.render('admin_login', { error: null });
 });
 
 // Login handler
-app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
+app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next) => {
   const { password } = req.body;
+  const passwordValid = password === process.env.ADMIN_PASSWORD;
 
-  // Debug logging for login attempts
-  logger.info('Login attempt', {
+  logger.info('===> ADMIN LOGIN POST', {
     sessionID: req.sessionID,
-    hasSession: !!req.session,
+    passwordValid: passwordValid,
+    sessionKeys_BEFORE: Object.keys(req.session || {}),
+    hasIsAdmin_BEFORE: 'isAdmin' in (req.session || {}),
     protocol: req.protocol,
     secure: req.secure,
-    hostname: req.hostname,
-    forwardedProto: req.get('x-forwarded-proto'),
-    forwardedHost: req.get('x-forwarded-host'),
-    userAgent: req.get('user-agent')
+    forwardedProto: req.get('x-forwarded-proto')
   });
 
-  if (password === process.env.ADMIN_PASSWORD) {
-    const oldSessionID = req.sessionID;
+  if (!passwordValid) {
+    logger.warn('LOGIN FAILED - Invalid password', { sessionID: req.sessionID });
+    return res.render('admin_login', { error: 'Invalid password.' });
+  }
 
-    logger.info('BEFORE setting isAdmin', {
-      sessionID: oldSessionID,
-      sessionKeys: Object.keys(req.session),
+  // Password is valid - regenerate session for security
+  req.session.regenerate((err) => {
+    if (err) {
+      logger.error('SESSION REGENERATE ERROR', {
+        error: err.message,
+        stack: err.stack,
+        sessionID: req.sessionID
+      });
+      return next(err);
+    }
+
+    const newSessionID = req.sessionID;
+    logger.info('SESSION REGENERATED', {
+      oldSessionID: 'destroyed',
+      newSessionID: newSessionID,
+      sessionKeys_AFTER_REGEN: Object.keys(req.session || {})
+    });
+
+    // Set admin flags on NEW session
+    req.session.isAdmin = true;
+
+    logger.info('ADMIN FLAGS SET', {
+      sessionID: req.sessionID,
+      sessionKeys_AFTER_SET: Object.keys(req.session || {}),
+      isAdmin: req.session.isAdmin,
       hasIsAdmin: 'isAdmin' in req.session
     });
 
-    // DO NOT REGENERATE - it breaks cookie persistence with SQLiteStore
-    // Just set isAdmin on existing session
-    req.session.isAdmin = true;
-
-    logger.info('AFTER setting isAdmin, BEFORE save', {
-      sessionID: req.sessionID,
-      sessionKeys: Object.keys(req.session),
-      isAdmin: req.session.isAdmin,
-      sessionIDChanged: req.sessionID !== oldSessionID
-    });
-
-    // Explicitly save the session to SQLite store
-    req.session.save((saveErr) => {
-      if (saveErr) {
-        logger.error('Session save error', {
-          error: saveErr.message,
-          stack: saveErr.stack,
+    // Save session to SQLite store
+    req.session.save((err2) => {
+      if (err2) {
+        logger.error('SESSION SAVE ERROR', {
+          error: err2.message,
+          stack: err2.stack,
           sessionID: req.sessionID
         });
-        return res.render('admin_login', { error: 'Session error. Please try again.' });
+        return next(err2);
       }
 
-      // CRITICAL: Log what we ACTUALLY saved
-      logger.info('AFTER save callback - session saved to SQLite', {
+      logger.info('SESSION SAVED TO SQLITE', {
         sessionID: req.sessionID,
-        sessionKeys: Object.keys(req.session),
+        sessionKeys_AFTER_SAVE: Object.keys(req.session || {}),
         isAdmin: req.session.isAdmin,
-        isAdminType: typeof req.session.isAdmin,
         isAdminValue: String(req.session.isAdmin),
+        isAdminType: typeof req.session.isAdmin,
         cookieSecure: req.session.cookie.secure,
-        cookieSameSite: req.session.cookie.sameSite,
-        cookiePath: req.session.cookie.path,
-        cookieExpires: req.session.cookie.expires,
-        storeType: 'SQLiteStore',
-        redirectTo: '/admin/dashboard'
+        willRedirectTo: '/admin/dashboard'
       });
 
-      // NOW redirect - session is saved to disk
-      return res.redirect('/admin/dashboard');
+      // Redirect with explicit 302
+      return res.redirect(302, '/admin/dashboard');
     });
-  } else {
-    logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
-    res.render('admin_login', { error: 'Invalid password.' });
-  }
+  });
 });
 
 // Logout
@@ -662,13 +696,11 @@ app.post('/admin/logout', (req, res) => {
 
 // Dashboard
 app.get('/admin/dashboard', requireAuth, (req, res) => {
-  // CRITICAL: Log session state when dashboard loads
-  logger.info('Dashboard loaded - session state', {
+  logger.info('===> DASHBOARD LOADED', {
     sessionID: req.sessionID,
-    sessionKeys: Object.keys(req.session),
-    isAdmin: req.session.isAdmin,
-    hasIsAdmin: 'isAdmin' in req.session,
-    sessionCookie: req.session.cookie
+    sessionKeys: Object.keys(req.session || {}),
+    isAdmin: req.session?.isAdmin,
+    hasIsAdmin: 'isAdmin' in (req.session || {})
   });
   const { start_date, end_date } = req.query;
 
