@@ -397,6 +397,11 @@ app.use(helmet({
 // HTTPS enforcement in production
 if (process.env.NODE_ENV === 'production') {
   app.use((req, res, next) => {
+    // Skip HTTPS redirect for health check endpoints
+    if (req.path === '/healthz' || req.path === '/health') {
+      return next();
+    }
+
     const forwardedProto = req.get('x-forwarded-proto');
     const forwardedHost = req.get('x-forwarded-host');
 
