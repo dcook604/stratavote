@@ -1,8 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const SQLiteStore = require('connect-sqlite3')(session);
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const csrf = require('csurf');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -260,7 +262,23 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+// Determine session storage directory
+const persistentDir = path.join(__dirname, 'persistent');
+const sessionDir = fs.existsSync(persistentDir) ? persistentDir : __dirname;
+
+logger.info('Session store configuration', {
+  directory: sessionDir,
+  isPersistent: fs.existsSync(persistentDir)
+});
+
 app.use(session({
+  store: new SQLiteStore({
+    db: 'sessions.db',
+    dir: sessionDir,
+    table: 'sessions',
+    // Clean up expired sessions every hour
+    concurrentDB: true
+  }),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
