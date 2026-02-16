@@ -339,6 +339,18 @@ app.use((req, res, next) => {
   // Log when response finishes
   res.on('finish', () => {
     const duration = Date.now() - start;
+    const setCookieRaw = res.getHeader('set-cookie');
+
+    // Parse Set-Cookie to show details (not the actual value for security)
+    let cookieInfo = 'none';
+    if (setCookieRaw) {
+      const cookieStr = Array.isArray(setCookieRaw) ? setCookieRaw[0] : setCookieRaw;
+      const parts = cookieStr.split(';').map(p => p.trim());
+      const name = parts[0].split('=')[0];
+      const flags = parts.slice(1).join('; ');
+      cookieInfo = `${name}=<value>; ${flags}`;
+    }
+
     logger.info('HTTP RESPONSE', {
       method: req.method,
       path: req.originalUrl,
@@ -347,7 +359,8 @@ app.use((req, res, next) => {
       sessionID: req.sessionID,
       sessionKeys: Object.keys(req.session || {}),
       isAdmin: req.session?.isAdmin,
-      setCookieHeader: !!res.getHeader('set-cookie'),
+      setCookieHeader: !!setCookieRaw,
+      setCookieDetails: cookieInfo,
       location: res.getHeader('location') || 'none'
     });
   });
