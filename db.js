@@ -2,10 +2,26 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure data directory exists
+// Ensure data directory exists with proper error handling
 const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+try {
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o775 });
+  }
+  // Verify directory is writable
+  fs.accessSync(dataDir, fs.constants.W_OK);
+} catch (err) {
+  console.error('Failed to create or access data directory:', err);
+  console.error('Data directory path:', dataDir);
+  console.error('Current user:', process.env.USER || 'unknown');
+  // Log permissions
+  try {
+    const stats = fs.statSync(dataDir);
+    console.error('Directory permissions:', stats.mode.toString(8));
+  } catch (e) {
+    console.error('Could not stat directory');
+  }
+  throw err;
 }
 
 const dbPath = path.join(dataDir, 'data.sqlite');
