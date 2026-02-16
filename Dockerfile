@@ -30,10 +30,13 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 # Copy application files
 COPY --chown=nodejs:nodejs . .
 
+# Debug: List files to verify copy
+RUN ls -la /app/ && echo "=== Checking for server.js ===" && ls -la /app/server.js || echo "server.js NOT FOUND!"
+
 # Create necessary directories with proper permissions
 RUN mkdir -p logs backups && \
     chown -R nodejs:nodejs logs backups && \
-    chmod +x scripts/backup.sh
+    (chmod +x scripts/backup.sh 2>/dev/null || true)
 
 # Switch to non-root user
 USER nodejs
