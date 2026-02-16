@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export Results - Strata Vote Admin</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Export Vote Results</h1>
+      <a href="/admin/dashboard" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error">
+        <%= error %>
+      </div>
+    <% } %>
+
+    <% if (success) { %>
+      <div class="alert alert-success">
+        <%= success %>
+      </div>
+    <% } %>
+
+    <form method="POST" action="/admin/export" class="form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+
+      <div class="form-group">
+        <h3>Date Range</h3>
+        <p>Select the date range for motions to export. Only motions with status "Closed" or "Published" will be included.</p>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="start_date">From Date *</label>
+          <input type="datetime-local" id="start_date" name="start_date" required>
+          <small>Select the start of the date range</small>
+        </div>
+
+        <div class="form-group">
+          <label for="end_date">To Date *</label>
+          <input type="datetime-local" id="end_date" name="end_date" required>
+          <small>Select the end of the date range</small>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Export Format *</label>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="format" value="csv" checked>
+            <span>CSV - Spreadsheet format (Excel/Google Sheets compatible)</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="format" value="pdf">
+            <span>PDF - Print-ready report with formatted tables</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="alert alert-info">
+          <strong>Note:</strong> The export will include motion details, voting statistics, and vote breakdowns for all closed or published motions within the selected date range. The date filter uses the motion's closing date.
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Generate Export</button>
+    </form>
+  </div>
+</body>
+</html>

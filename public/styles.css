@@ -153,6 +153,12 @@ body {
   border: 1px solid #f5c6cb;
 }
 
+.alert-info {
+  background-color: #d1ecf1;
+  color: #0c5460;
+  border: 1px solid #bee5eb;
+}
+
 /* Forms */
 .form {
   width: 100%;
@@ -188,6 +194,36 @@ body {
   margin-top: 0.25rem;
   color: #666;
   font-size: 0.875rem;
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.radio-label:hover {
+  background-color: #f8f9fa;
+}
+
+.radio-label input[type="radio"] {
+  margin-right: 0.75rem;
+  width: auto;
+  cursor: pointer;
+}
+
+.radio-label span {
+  flex: 1;
 }
 
 .form-row {

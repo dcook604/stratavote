@@ -5,6 +5,7 @@
       <nav>
         <a href="/admin/dashboard">Dashboard</a>
         <a href="/admin/motions/new">New Motion</a>
+        <a href="/admin/export">Export Results</a>
         <form method="POST" action="/admin/logout" style="display: inline;">
           <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
           <button type="submit" class="btn-link">Logout</button>

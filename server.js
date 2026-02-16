@@ -87,6 +87,12 @@ const schemas = {
 
   login: Joi.object({
     password: Joi.string().min(1).max(200).required()
+  }),
+
+  export: Joi.object({
+    start_date: Joi.string().isoDate().required(),
+    end_date: Joi.string().isoDate().required(),
+    format: Joi.string().valid('csv', 'pdf').required()
   })
 };
 
@@ -99,6 +105,142 @@ function validate(schema) {
     }
     next();
   };
+}
+
+// Export helper functions
+function generateCSVExport(res, exportData, start_date, end_date) {
+  const now = new Date().toISOString();
+  const startFormatted = start_date.substring(0, 10);
+  const endFormatted = end_date.substring(0, 10);
+
+  let csv = 'VOTE RESULTS EXPORT\n';
+  csv += `Generated: ${now}\n`;
+  csv += `Date Range: ${start_date} to ${end_date}\n\n`;
+  csv += 'Motion ID,Motion Title,Status,Outcome,Opens At,Closes At,Required Majority,Eligible Voters,Votes Cast,Turnout %,Choice,Vote Count,Vote %\n';
+
+  for (const { motion, stats, results } of exportData) {
+    const turnout = stats.eligible > 0
+      ? (stats.voted / stats.eligible * 100).toFixed(2)
+      : '0.00';
+
+    if (results.length === 0) {
+      // Motion with no votes
+      csv += [
+        motion.id,
+        `"${motion.title.replace(/"/g, '""')}"`,
+        motion.status,
+        motion.outcome || '',
+        motion.open_at,
+        motion.close_at,
+        motion.required_majority,
+        stats.eligible,
+        stats.voted,
+        turnout,
+        '',
+        '',
+        ''
+      ].join(',') + '\n';
+    } else {
+      // One row per vote choice
+      results.forEach(result => {
+        const percentage = stats.voted > 0
+          ? (result.count / stats.voted * 100).toFixed(2)
+          : '0.00';
+
+        csv += [
+          motion.id,
+          `"${motion.title.replace(/"/g, '""')}"`,
+          motion.status,
+          motion.outcome || '',
+          motion.open_at,
+          motion.close_at,
+          motion.required_majority,
+          stats.eligible,
+          stats.voted,
+          turnout,
+          `"${result.choice.replace(/"/g, '""')}"`,
+          result.count,
+          percentage
+        ].join(',') + '\n';
+      });
+    }
+  }
+
+  const filename = `vote-results-${startFormatted}-to-${endFormatted}.csv`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+}
+
+function generatePDFExport(res, exportData, start_date, end_date) {
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ margin: 50 });
+
+  const startFormatted = start_date.substring(0, 10);
+  const endFormatted = end_date.substring(0, 10);
+  const filename = `vote-results-${startFormatted}-to-${endFormatted}.pdf`;
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  // Pipe PDF to response
+  doc.pipe(res);
+
+  // Title
+  doc.fontSize(20).text('Vote Results Export', { align: 'center' });
+  doc.fontSize(10).text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+  doc.text(`Date Range: ${start_date} to ${end_date}`, { align: 'center' });
+  doc.moveDown(2);
+
+  // For each motion
+  exportData.forEach((data, index) => {
+    const { motion, stats, results } = data;
+
+    // Motion header
+    doc.fontSize(14).text(`Motion ${index + 1}: ${motion.title}`, { underline: true });
+    doc.moveDown(0.5);
+
+    // Motion details
+    doc.fontSize(10);
+    doc.text(`Status: ${motion.status}`, { continued: true });
+    doc.text(`    Outcome: ${motion.outcome || 'Not set'}`);
+    doc.text(`Opens: ${new Date(motion.open_at).toLocaleString()}`);
+    doc.text(`Closes: ${new Date(motion.close_at).toLocaleString()}`);
+    doc.text(`Required Majority: ${motion.required_majority === 'Simple' ? 'Simple (>50%)' : 'Two-Thirds (≥66.67%)'}`);
+    doc.moveDown(0.5);
+
+    // Statistics
+    const turnout = stats.eligible > 0
+      ? (stats.voted / stats.eligible * 100).toFixed(1)
+      : '0';
+    doc.text(`Eligible Voters: ${stats.eligible}    Votes Cast: ${stats.voted}    Turnout: ${turnout}%`);
+    doc.moveDown(0.5);
+
+    // Results table
+    if (results.length > 0) {
+      doc.text('Vote Breakdown:', { underline: true });
+      doc.moveDown(0.3);
+
+      results.forEach(result => {
+        const percentage = stats.voted > 0
+          ? (result.count / stats.voted * 100).toFixed(1)
+          : '0';
+        doc.text(`  ${result.choice}: ${result.count} votes (${percentage}%)`);
+      });
+    } else {
+      doc.text('No votes cast');
+    }
+
+    doc.moveDown(2);
+
+    // Page break if not last motion and near bottom of page
+    if (index < exportData.length - 1 && doc.y > 650) {
+      doc.addPage();
+    }
+  });
+
+  // Finalize PDF
+  doc.end();
 }
 
 // Middleware
@@ -719,6 +861,70 @@ app.get('/admin/motions/:id/export.csv', requireAuth, (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="motion-${id}-ballots.csv"`);
   res.send(csv);
+});
+
+// Export Results - Display form
+app.get('/admin/export', requireAuth, (req, res) => {
+  res.render('export', { error: null, success: null });
+});
+
+// Export Results - Generate export
+app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
+  const { start_date, end_date, format } = req.body;
+
+  // Validate date range
+  if (new Date(end_date) < new Date(start_date)) {
+    return res.render('export', {
+      error: 'End date must be after or equal to start date',
+      success: null
+    });
+  }
+
+  // Audit log
+  logger.info('Export requested', {
+    start_date,
+    end_date,
+    format,
+    sessionId: req.session.id,
+    ip: req.ip
+  });
+
+  // Query motions in date range
+  const motions = db.prepare(`
+    SELECT * FROM motions
+    WHERE close_at >= ? AND close_at <= ?
+    AND status IN ('Closed', 'Published')
+    ORDER BY close_at DESC
+  `).all(start_date, end_date);
+
+  if (motions.length === 0) {
+    return res.render('export', {
+      error: 'No closed or published motions found in this date range',
+      success: null
+    });
+  }
+
+  // Aggregate data for each motion
+  const exportData = motions.map(motion => {
+    const stats = getMotionStats(motion.id);
+    const results = ballotQueries.getResultsByMotion.all(motion.id);
+    return { motion, stats, results };
+  });
+
+  // Generate export based on format
+  try {
+    if (format === 'csv') {
+      generateCSVExport(res, exportData, start_date, end_date);
+    } else {
+      generatePDFExport(res, exportData, start_date, end_date);
+    }
+  } catch (error) {
+    logger.error('Export generation failed', { error: error.message, stack: error.stack });
+    res.status(500).render('export', {
+      error: 'Failed to generate export. Please try again.',
+      success: null
+    });
+  }
 });
 
 // Health check endpoints (for Coolify/Docker/monitoring)
