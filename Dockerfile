@@ -15,8 +15,8 @@ RUN npm ci --only=production
 # Production stage
 FROM node:18-alpine
 
-# Install sqlite3 for backups
-RUN apk add --no-cache sqlite
+# Install sqlite3 for backups and curl for healthcheck
+RUN apk add --no-cache sqlite curl
 
 # Create app user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -45,7 +45,7 @@ EXPOSE 3300
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3300/healthz', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD curl -f http://localhost:3300/healthz || exit 1
 
 # Start application
 CMD ["node", "server.js"]
