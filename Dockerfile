@@ -31,8 +31,10 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --chown=nodejs:nodejs . .
 
 # Create necessary directories with proper permissions
+# The nodejs user needs write access to create database files and logs
 RUN mkdir -p logs backups && \
-    chown -R nodejs:nodejs logs backups && \
+    chown -R nodejs:nodejs /app && \
+    chmod -R 755 /app && \
     (chmod +x scripts/backup.sh 2>/dev/null || true)
 
 # Switch to non-root user
