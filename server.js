@@ -47,9 +47,17 @@ if (process.env.SESSION_SECRET === 'super_secret_session_key_change_in_productio
 const app = express();
 const PORT = process.env.PORT || 3300;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Trust proxy headers when behind a reverse proxy (Coolify/Traefik/nginx)
 app.set('trust proxy', 1);
+
+logger.info('Environment configuration', {
+  nodeEnv: process.env.NODE_ENV,
+  isProduction: IS_PRODUCTION,
+  baseUrl: BASE_URL,
+  trustProxy: true
+});
 
 // Rate limiters
 const loginLimiter = rateLimit({
@@ -283,17 +291,24 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   name: 'strata.sid',
-  proxy: true, // Trust the reverse proxy
+  proxy: true, // Trust the reverse proxy for secure cookie handling
   cookie: {
     httpOnly: true,
-    // Behind Coolify/Traefik reverse proxy, connection to app is HTTP
-    // but external connection is HTTPS - set secure to false
-    secure: false,
-    // Use 'lax' instead of 'strict' to allow cookies on redirects
+    // CRITICAL: Set secure=true in production for HTTPS connections
+    // With trust proxy enabled, Express will properly handle this behind Traefik
+    secure: IS_PRODUCTION,
     sameSite: 'lax',
+    path: '/',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
+
+logger.info('Session middleware configured', {
+  store: 'SQLiteStore',
+  cookieSecure: IS_PRODUCTION,
+  cookieSameSite: 'lax',
+  trustProxy: true
+});
 
 // Debug middleware - log session state on every request
 app.use((req, res, next) => {
@@ -603,10 +618,13 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
         sessionKeys: Object.keys(req.session),
         isAdmin: req.session.isAdmin,
         isAdminType: typeof req.session.isAdmin,
-        cookie: req.session.cookie,
+        cookieSecure: req.session.cookie.secure,
+        cookieSameSite: req.session.cookie.sameSite,
+        cookiePath: req.session.cookie.path,
         redirectTo: '/admin/dashboard'
       });
 
+      // Redirect to dashboard - browser should receive Set-Cookie with Secure flag
       return res.redirect('/admin/dashboard');
     });
   } else {
