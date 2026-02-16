@@ -366,21 +366,28 @@ app.use((req, res, next) => {
 
 // Auth middleware
 function requireAuth(req, res, next) {
+  // CRITICAL DEBUG: Log EVERYTHING about the session
   logger.info('Auth check', {
     path: req.path,
     sessionID: req.sessionID,
     hasSession: !!req.session,
+    sessionKeys: Object.keys(req.session || {}),
     isAdmin: req.session?.isAdmin,
-    hasCookie: !!req.headers.cookie
+    isAdminType: typeof req.session?.isAdmin,
+    isAdminValue: String(req.session?.isAdmin),
+    hasCookie: !!req.headers.cookie,
+    cookieHeader: req.headers.cookie
   });
 
   if (req.session.isAdmin) {
+    logger.info('Auth PASSED - allowing access');
     return next();
   }
 
-  logger.warn('Auth failed - redirecting to login', {
+  logger.warn('Auth FAILED - redirecting to login', {
     path: req.path,
-    sessionID: req.sessionID
+    sessionID: req.sessionID,
+    reason: `isAdmin is ${req.session?.isAdmin}`
   });
 
   res.redirect('/admin/login');
@@ -596,10 +603,13 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
           return res.render('admin_login', { error: 'Session error. Please try again.' });
         }
 
-        logger.info('Login successful', {
+        logger.info('Login successful - about to redirect', {
           sessionID: req.sessionID,
+          sessionKeys: Object.keys(req.session),
           isAdmin: req.session.isAdmin,
-          cookie: req.session.cookie
+          isAdminType: typeof req.session.isAdmin,
+          cookie: req.session.cookie,
+          redirectTo: '/admin/dashboard'
         });
 
         return res.redirect('/admin/dashboard');
