@@ -30,8 +30,13 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 # Copy application files
 COPY --chown=nodejs:nodejs . .
 
+# Copy and set up entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Create necessary directories with proper permissions
-# The nodejs user needs write access to create database files and logs
+# Note: If these are volume mount points, the mounted volumes will override these settings
+# The entrypoint.sh script handles runtime permission checks
 RUN mkdir -p logs backups persistent && \
     chown -R nodejs:nodejs /app && \
     chmod -R 755 /app && \
@@ -47,5 +52,6 @@ EXPOSE 3300
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3300/healthz || exit 1
 
-# Start application
+# Use entrypoint script to handle runtime setup
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["node", "server.js"]
