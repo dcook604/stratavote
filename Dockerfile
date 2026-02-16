@@ -32,10 +32,14 @@ COPY --chown=nodejs:nodejs . .
 
 # Create necessary directories with proper permissions
 # The nodejs user needs write access to create database files and logs
-RUN mkdir -p logs backups && \
+RUN mkdir -p logs backups data && \
     chown -R nodejs:nodejs /app && \
     chmod -R 755 /app && \
     (chmod +x scripts/backup.sh 2>/dev/null || true)
+
+# Declare volumes for persistent storage
+# These directories will be mounted from host at runtime
+VOLUME ["/app/data", "/app/logs", "/app/backups"]
 
 # Switch to non-root user
 USER nodejs

@@ -58,20 +58,27 @@ openssl rand -base64 32
 openssl rand -hex 16
 ```
 
-### Step 4: Configure Persistent Storage
+### Step 4: Configure Persistent Storage ⚠️ CRITICAL
 
-Coolify automatically handles volumes, but verify these paths are persisted:
+**This step is REQUIRED to prevent data loss!**
 
 1. Go to **"Storages"** tab
-2. Add persistent volumes:
+2. Click **"+ Add Storage"** for each volume below:
 
-| Name | Source Path | Destination Path | Description |
-|------|-------------|------------------|-------------|
-| database | `/var/lib/coolify/data/stratavote/database` | `/app` | SQLite database storage |
-| logs | `/var/lib/coolify/data/stratavote/logs` | `/app/logs` | Application logs |
-| backups | `/var/lib/coolify/data/stratavote/backups` | `/app/backups` | Database backups |
+| Destination Path (Container) | Description | Required |
+|------------------------------|-------------|----------|
+| `/app/data` | **SQLite database storage** | ✅ YES |
+| `/app/logs` | Application logs | Recommended |
+| `/app/backups` | Database backups | Recommended |
 
-**Note:** Coolify may automatically create these. Verify in the Storages tab.
+**For each storage:**
+- Leave **"Source Path"** empty (Coolify auto-generates)
+- Set **"Destination Path"** exactly as shown above
+- Click **"Save"**
+
+**Note:** Without persistent storage, ALL DATA WILL BE LOST on container restart!
+
+📖 **Detailed guide:** See `PERSISTENT_STORAGE.md` in repository
 
 ### Step 5: Configure Domain & HTTPS
 

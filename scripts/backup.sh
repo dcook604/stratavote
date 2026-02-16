@@ -3,8 +3,8 @@
 # Usage: ./scripts/backup.sh
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-DB_FILE="${DB_FILE:-./data.sqlite}"
+TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
+DB_FILE="${DB_FILE:-./data/data.sqlite}"
 
 mkdir -p "$BACKUP_DIR"
 
