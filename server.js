@@ -265,13 +265,13 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   name: 'strata.sid',
+  proxy: true, // Trust the reverse proxy
   cookie: {
     httpOnly: true,
-    // When behind a reverse proxy (Coolify/Traefik), secure should be 'auto'
-    // or based on X-Forwarded-Proto header (handled by trust proxy)
-    secure: process.env.NODE_ENV === 'production' ? 'auto' : false,
+    // Behind Coolify/Traefik reverse proxy, connection to app is HTTP
+    // but external connection is HTTPS - set secure to false
+    secure: false,
     // Use 'lax' instead of 'strict' to allow cookies on redirects
-    // This fixes login loops behind reverse proxies
     sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
