@@ -4,7 +4,13 @@
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
-DB_FILE="${DB_FILE:-./data.sqlite}"
+
+# Auto-detect database location
+if [ -f "./persistent/data.sqlite" ]; then
+  DB_FILE="${DB_FILE:-./persistent/data.sqlite}"
+else
+  DB_FILE="${DB_FILE:-./data.sqlite}"
+fi
 
 mkdir -p "$BACKUP_DIR"
 

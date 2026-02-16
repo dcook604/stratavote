@@ -1,8 +1,20 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-// Use simple path - Coolify will handle persistence via volume mounting /app
-const dbPath = path.join(__dirname, 'data.sqlite');
+// Use persistent directory for database if it exists (Coolify volume mount)
+// Otherwise fall back to /app for development
+const persistentDir = path.join(__dirname, 'persistent');
+let dbPath;
+
+if (fs.existsSync(persistentDir)) {
+  // Production: Use persistent volume
+  dbPath = path.join(persistentDir, 'data.sqlite');
+} else {
+  // Development or no persistent storage: Use /app directory
+  dbPath = path.join(__dirname, 'data.sqlite');
+}
+
 const db = new Database(dbPath);
 
 // Enable foreign keys
