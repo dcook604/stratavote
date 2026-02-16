@@ -280,7 +280,7 @@ app.use(session({
 // Debug middleware - log session state on every request
 app.use((req, res, next) => {
   if (req.path.startsWith('/admin')) {
-    logger.debug('Request', {
+    logger.info('Request', {
       method: req.method,
       path: req.path,
       sessionID: req.sessionID,
