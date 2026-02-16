@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard - Strata Vote Admin</title>
+  <title>Dashboard - Spectrum 4 Voting System</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -15,10 +15,59 @@
       <a href="/admin/motions/new" class="btn btn-primary">+ New Motion</a>
     </div>
 
+    <!-- Date Filter Form -->
+    <div class="card">
+      <h3>Filter Motions</h3>
+      <form method="GET" action="/admin/dashboard" class="form">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="start_date">From Date</label>
+            <input type="datetime-local"
+                   id="start_date"
+                   name="start_date"
+                   value="<%= startDate || '' %>">
+            <small>Filter by closing date range</small>
+          </div>
+
+          <div class="form-group">
+            <label for="end_date">To Date</label>
+            <input type="datetime-local"
+                   id="end_date"
+                   name="end_date"
+                   value="<%= endDate || '' %>">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+          <button type="submit" class="btn btn-primary">Apply Filter</button>
+          <% if (isFiltered) { %>
+            <a href="/admin/dashboard" class="btn btn-secondary">Clear Filter</a>
+          <% } %>
+        </div>
+      </form>
+
+      <% if (isFiltered) { %>
+        <div class="alert alert-info" style="margin-top: 1rem;">
+          <strong>Filtered:</strong> Showing motions closing between
+          <%= new Date(startDate).toLocaleString() %> and <%= new Date(endDate).toLocaleString() %>
+          (<%= motions.length %> results)
+        </div>
+      <% } else { %>
+        <p class="text-muted" style="margin-top: 1rem;">
+          Showing last 10 motions. Use date filter to search by date range.
+        </p>
+      <% } %>
+    </div>
+
     <% if (motions.length === 0) { %>
       <div class="empty-state">
-        <p>No motions yet. Create your first motion to get started.</p>
-        <a href="/admin/motions/new" class="btn btn-primary">Create Motion</a>
+        <% if (isFiltered) { %>
+          <p>No motions found for the selected date range.</p>
+          <a href="/admin/dashboard" class="btn btn-secondary">Clear Filter</a>
+        <% } else { %>
+          <p>No motions yet. Create your first motion to get started.</p>
+          <a href="/admin/motions/new" class="btn btn-primary">Create Motion</a>
+        <% } %>
       </div>
     <% } else { %>
       <div class="motions-list">

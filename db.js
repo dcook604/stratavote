@@ -81,6 +81,26 @@ function initDatabase() {
     // Columns might already exist, ignore error
   }
 
+  // Council Members table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS council_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      unit_number TEXT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_council_members_email ON council_members(email);
+    CREATE INDEX IF NOT EXISTS idx_council_members_unit ON council_members(unit_number);
+  `);
+
+  // Performance index for dashboard date filtering
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_motions_close_at ON motions(close_at);
+  `);
+
   const logger = require('./logger');
   logger.info('Database initialized at:', dbPath);
 }
@@ -158,6 +178,23 @@ const ballotQueries = {
   existsForToken: db.prepare('SELECT 1 FROM ballots WHERE voter_token_id = ? LIMIT 1')
 };
 
+// Prepared statements for council members
+const councilQueries = {
+  create: db.prepare(`
+    INSERT INTO council_members (name, email, unit_number, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `),
+  getById: db.prepare('SELECT * FROM council_members WHERE id = ?'),
+  getAll: db.prepare('SELECT * FROM council_members ORDER BY name ASC'),
+  update: db.prepare(`
+    UPDATE council_members
+    SET name = ?, email = ?, unit_number = ?, updated_at = ?
+    WHERE id = ?
+  `),
+  delete: db.prepare('DELETE FROM council_members WHERE id = ?'),
+  findByEmail: db.prepare('SELECT * FROM council_members WHERE email = ?')
+};
+
 // Transaction wrapper for vote submission
 function submitVote(motionId, tokenId, choice, userAgent, ipHash) {
   try {
@@ -202,6 +239,7 @@ module.exports = {
   motionQueries,
   tokenQueries,
   ballotQueries,
+  councilQueries,
   submitVote,
   getMotionStats
 };

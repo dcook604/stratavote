@@ -13,6 +13,7 @@ const {
   motionQueries,
   tokenQueries,
   ballotQueries,
+  councilQueries,
   submitVote,
   getMotionStats
 } = require('./db');
@@ -77,7 +78,11 @@ const schemas = {
   }),
 
   token: Joi.object({
-    recipients: Joi.string().min(1).max(10000).required()
+    recipients: Joi.string().max(10000).allow('').optional(),
+    selected_council_members: Joi.alternatives().try(
+      Joi.string(),
+      Joi.array().items(Joi.string())
+    ).optional()
   }),
 
   vote: Joi.object({
@@ -93,6 +98,12 @@ const schemas = {
     start_date: Joi.string().isoDate().required(),
     end_date: Joi.string().isoDate().required(),
     format: Joi.string().valid('csv', 'pdf').required()
+  }),
+
+  councilMember: Joi.object({
+    name: Joi.string().min(2).max(100).required(),
+    email: Joi.string().email().max(200).required(),
+    unit_number: Joi.string().max(50).allow('').optional()
   })
 };
 
@@ -511,14 +522,39 @@ app.post('/admin/logout', (req, res) => {
 
 // Dashboard
 app.get('/admin/dashboard', requireAuth, (req, res) => {
-  const motions = motionQueries.getAll.all();
+  const { start_date, end_date } = req.query;
+
+  let motions;
+  let isFiltered = false;
+
+  if (start_date && end_date) {
+    // Filter by close_at date range
+    motions = db.prepare(`
+      SELECT * FROM motions
+      WHERE close_at >= ? AND close_at <= ?
+      ORDER BY created_at DESC
+    `).all(start_date, end_date);
+    isFiltered = true;
+  } else {
+    // Default: Last 10 motions
+    motions = db.prepare(`
+      SELECT * FROM motions
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).all();
+  }
 
   const motionsWithStats = motions.map(motion => {
     const stats = getMotionStats(motion.id);
     return { ...motion, stats };
   });
 
-  res.render('admin_dashboard', { motions: motionsWithStats });
+  res.render('admin_dashboard', {
+    motions: motionsWithStats,
+    isFiltered,
+    startDate: start_date || null,
+    endDate: end_date || null
+  });
 });
 
 // New motion form
@@ -635,10 +671,14 @@ app.get('/admin/motions/:id/tokens', requireAuth, (req, res) => {
   }
 
   const tokens = tokenQueries.getByMotion.all(id);
+  const councilMembers = councilQueries.getAll.all();
+
+  motion.options = JSON.parse(motion.options_json);
 
   res.render('tokens', {
     motion,
     tokens,
+    councilMembers,
     baseUrl: BASE_URL,
     success: req.query.success || null,
     error: req.query.error || null
@@ -648,18 +688,56 @@ app.get('/admin/motions/:id/tokens', requireAuth, (req, res) => {
 // Generate tokens
 app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), async (req, res) => {
   const { id } = req.params;
-  const { recipients } = req.body;
-
-  if (!recipients || !recipients.trim()) {
-    return res.redirect(`/admin/motions/${id}/tokens?error=No+recipients+provided`);
-  }
+  const { recipients, selected_council_members } = req.body;
 
   const motion = motionQueries.getById.get(id);
   if (!motion) {
     return res.redirect(`/admin/motions/${id}/tokens?error=Motion+not+found`);
   }
 
-  const lines = recipients.split('\n').map(line => line.trim()).filter(line => line);
+  // Collect recipients from both sources
+  const recipientList = [];
+  const emailSet = new Set();
+
+  // Parse textarea recipients (existing logic)
+  if (recipients && recipients.trim()) {
+    const lines = recipients.split('\n').map(line => line.trim()).filter(line => line);
+    for (const line of lines) {
+      const parts = line.split(',').map(p => p.trim());
+      const name = parts[0] || null;
+      const email = parts[1] || null;
+      const unit = parts[2] || null;
+
+      if (email && !emailSet.has(email.toLowerCase())) {
+        recipientList.push({ name, email, unit });
+        emailSet.add(email.toLowerCase());
+      }
+    }
+  }
+
+  // Add selected council members
+  if (selected_council_members) {
+    const memberIds = Array.isArray(selected_council_members)
+      ? selected_council_members
+      : [selected_council_members];
+
+    for (const memberId of memberIds) {
+      const member = councilQueries.getById.get(memberId);
+      if (member && !emailSet.has(member.email.toLowerCase())) {
+        recipientList.push({
+          name: member.name,
+          email: member.email,
+          unit: member.unit_number
+        });
+        emailSet.add(member.email.toLowerCase());
+      }
+    }
+  }
+
+  if (recipientList.length === 0) {
+    return res.redirect(`/admin/motions/${id}/tokens?error=No+recipients+provided`);
+  }
+
   let created = 0;
   let emailsSent = 0;
   let emailsFailed = 0;
@@ -667,11 +745,8 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
   const emailConfigured = isEmailConfigured();
 
   try {
-    for (const line of lines) {
-      const parts = line.split(',').map(p => p.trim());
-      const name = parts[0] || null;
-      const email = parts[1] || null;
-      const unit = parts[2] || null;
+    for (const recipient of recipientList) {
+      const { name, email, unit } = recipient;
 
       const token = crypto.randomBytes(24).toString('base64url');
       const created_at = new Date().toISOString();
@@ -827,6 +902,81 @@ app.post('/admin/tokens/:tokenId/resend-email', requireAuth, async (req, res) =>
     } else {
       res.status(500).send('Failed to resend email');
     }
+  }
+});
+
+// Council Members Management
+app.get('/admin/council', requireAuth, (req, res) => {
+  const members = councilQueries.getAll.all();
+  res.render('council', {
+    members,
+    success: req.query.success || null,
+    error: req.query.error || null
+  });
+});
+
+app.post('/admin/council', requireAuth, validate(schemas.councilMember), (req, res) => {
+  const { name, email, unit_number } = req.body;
+
+  try {
+    const existing = councilQueries.findByEmail.get(email);
+    if (existing) {
+      return res.redirect('/admin/council?error=' + encodeURIComponent('Email already exists'));
+    }
+
+    const now = new Date().toISOString();
+    councilQueries.create.run(name, email, unit_number || null, now, now);
+
+    logger.info(`Council member created: ${email}`);
+    res.redirect('/admin/council?success=' + encodeURIComponent('Council member added successfully'));
+  } catch (err) {
+    logger.error('Council member creation error:', err);
+    res.redirect('/admin/council?error=' + encodeURIComponent('Failed to add council member'));
+  }
+});
+
+app.post('/admin/council/:id/edit', requireAuth, validate(schemas.councilMember), (req, res) => {
+  const { id } = req.params;
+  const { name, email, unit_number } = req.body;
+
+  try {
+    const existing = councilQueries.getById.get(id);
+    if (!existing) {
+      return res.redirect('/admin/council?error=' + encodeURIComponent('Council member not found'));
+    }
+
+    const duplicate = db.prepare('SELECT * FROM council_members WHERE email = ? AND id != ?').get(email, id);
+    if (duplicate) {
+      return res.redirect('/admin/council?error=' + encodeURIComponent('Email already exists'));
+    }
+
+    const now = new Date().toISOString();
+    councilQueries.update.run(name, email, unit_number || null, now, id);
+
+    logger.info(`Council member updated: ${id}`);
+    res.redirect('/admin/council?success=' + encodeURIComponent('Council member updated successfully'));
+  } catch (err) {
+    logger.error('Council member update error:', err);
+    res.redirect('/admin/council?error=' + encodeURIComponent('Failed to update council member'));
+  }
+});
+
+app.post('/admin/council/:id/delete', requireAuth, (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const existing = councilQueries.getById.get(id);
+    if (!existing) {
+      return res.redirect('/admin/council?error=' + encodeURIComponent('Council member not found'));
+    }
+
+    councilQueries.delete.run(id);
+
+    logger.info(`Council member deleted: ${id}`);
+    res.redirect('/admin/council?success=' + encodeURIComponent('Council member deleted successfully'));
+  } catch (err) {
+    logger.error('Council member deletion error:', err);
+    res.redirect('/admin/council?error=' + encodeURIComponent('Failed to delete council member'));
   }
 });
 

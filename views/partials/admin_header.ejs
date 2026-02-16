@@ -1,10 +1,11 @@
 <header class="admin-header">
   <div class="container">
     <div class="header-content">
-      <h1 class="logo">Strata Vote Admin</h1>
+      <h1 class="logo">Spectrum 4 Voting System</h1>
       <nav>
         <a href="/admin/dashboard">Dashboard</a>
         <a href="/admin/motions/new">New Motion</a>
+        <a href="/admin/council">Council</a>
         <a href="/admin/export">Export Results</a>
         <form method="POST" action="/admin/logout" style="display: inline;">
           <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
