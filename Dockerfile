@@ -15,10 +15,13 @@ RUN npm ci --only=production
 # Production stage
 FROM node:18-alpine
 
-# Install sqlite3 for backups and curl for healthcheck
-RUN apk add --no-cache sqlite curl
+# Install runtime dependencies
+# su-exec: drop privileges from root to nodejs user (like gosu but for Alpine)
+# sqlite: for database operations and backups
+# curl: for healthcheck
+RUN apk add --no-cache su-exec sqlite curl
 
-# Create app user for security
+# Create app user for security (will drop to this user after fixing permissions)
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
@@ -30,20 +33,20 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 # Copy application files
 COPY --chown=nodejs:nodejs . .
 
-# Copy and set up entrypoint script
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Copy docker entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create necessary directories with proper permissions
-# Note: If these are volume mount points, the mounted volumes will override these settings
-# The entrypoint.sh script handles runtime permission checks
+# Note: Mounted volumes will override these, but the entrypoint will fix them at runtime
 RUN mkdir -p logs backups persistent && \
     chown -R nodejs:nodejs /app && \
     chmod -R 755 /app && \
     (chmod +x scripts/backup.sh 2>/dev/null || true)
 
-# Switch to non-root user
-USER nodejs
+# DO NOT switch to nodejs user here
+# The entrypoint script needs to run as root to fix volume permissions
+# It will then drop to nodejs user before starting the application
 
 # Expose port (Coolify will map this)
 EXPOSE 3300
@@ -52,6 +55,6 @@ EXPOSE 3300
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3300/healthz || exit 1
 
-# Use entrypoint script to handle runtime setup
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Use entrypoint script to fix permissions at runtime, then drop to nodejs user
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

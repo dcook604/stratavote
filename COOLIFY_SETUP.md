@@ -1,67 +1,41 @@
 # Coolify Deployment Guide
 
-This guide explains how to properly deploy Spectrum 4 Voting System on Coolify **without** needing manual permission fixes.
+This guide explains how to deploy Spectrum 4 Voting System on Coolify.
 
-## The Problem We're Solving
+## How Permission Handling Works
 
-Docker volumes mounted by Coolify may have incorrect ownership, causing permission errors when the Node.js application (running as UID 1001) tries to write to them.
+The application automatically handles volume permissions at startup:
 
-**You should NEVER need to manually `chown` as root.** This guide shows the proper way to configure Coolify.
+1. Container starts as **root**
+2. Entrypoint script fixes ownership of mounted volumes (sets to nodejs:nodejs)
+3. Script drops privileges to **nodejs user** (UID 1001)
+4. Application runs as non-root user
 
-## Proper Setup (Choose One Method)
+**You don't need to manually fix permissions.** The container handles it automatically.
 
-### Method 1: Configure Volume Permissions in Coolify (Recommended)
+## Simple Setup in Coolify
 
-When creating your application in Coolify:
+### Step 1: Add Persistent Storage
 
 1. **Go to your application → Storage → Add Volume**
    - Name: `persistent-data`
-   - Source: (auto-generated path)
+   - Source: Leave empty (Docker-managed) or specify a path
    - Destination: `/app/persistent`
+   - That's it! The container will fix permissions automatically.
 
-2. **Set the correct ownership:**
+### Step 2: Set Environment Variables
 
-   ```bash
-   # SSH to your Coolify server
-   ssh your-server
+See the Environment Variables section below.
 
-   # Find your application's volume path
-   sudo ls -la /var/lib/coolify/applications/
+### Step 3: Deploy
 
-   # Identify your app by name, copy the app ID
-   # The path will look like: /var/lib/coolify/applications/<app-id>/volumes/persistent
+Click "Deploy" in Coolify. The application will:
+- Start as root
+- Fix volume permissions
+- Drop to nodejs user
+- Start the application
 
-   # Set ownership to UID 1001 (nodejs user in container)
-   sudo chown -R 1001:1001 /var/lib/coolify/applications/<app-id>/volumes/persistent
-
-   # Verify
-   sudo ls -la /var/lib/coolify/applications/<app-id>/volumes/
-   ```
-
-3. **Deploy your application**
-   - The entrypoint script will verify permissions
-   - If permissions are correct, the app will start successfully
-   - If not, you'll see a clear error message in logs
-
-### Method 2: Use Docker User Namespace Remapping
-
-Configure Docker to automatically remap UIDs on the host. This is more complex but eliminates permission issues system-wide.
-
-See: https://docs.docker.com/engine/security/userns-remap/
-
-### Method 3: Use a Named Volume (Simplest)
-
-Instead of binding to a host path, use a Docker-managed named volume:
-
-1. In Coolify, create a **Named Volume** instead of a bind mount
-2. Docker will handle permissions automatically
-3. Your data will be stored in Docker's volume directory
-
-**In Coolify:**
-- Storage → Add Volume
-- Use a simple name like `persistent-data`
-- Don't specify a host path
-- Set mount point: `/app/persistent`
+No manual intervention needed!
 
 ## Environment Variables
 
@@ -121,24 +95,6 @@ If you see ❌ errors, the volume permissions are wrong.
 
 ## Troubleshooting
 
-### Error: "Cannot write to /app/persistent"
-
-**Cause:** Volume is owned by wrong user (probably root)
-
-**Fix:**
-```bash
-# SSH to Coolify server
-sudo chown -R 1001:1001 /var/lib/coolify/applications/<app-id>/volumes/persistent
-
-# Restart container in Coolify
-```
-
-### Error: "SQLITE_CANTOPEN"
-
-**Cause:** Database directory is not writable
-
-**Fix:** Same as above - fix volume ownership
-
 ### Data Not Persisting
 
 **Cause:** Volume is not mounted correctly
@@ -150,59 +106,27 @@ sudo chown -R 1001:1001 /var/lib/coolify/applications/<app-id>/volumes/persisten
 
 ## Why This Works
 
-1. **Dockerfile** creates directories at build time (ownership: nodejs:nodejs, UID 1001)
-2. **Coolify mounts volume** over `/app/persistent` (may override ownership)
-3. **Entrypoint script** runs as UID 1001 at container start:
-   - Checks if directories are writable
-   - Provides clear error messages if not
-   - Exits with error instead of failing silently
-4. **You fix permissions once** on the host volume directory
-5. **All future deployments work** without manual intervention
+1. **Dockerfile** builds the image without assuming volume permissions
+2. **Container starts as root** (standard Docker practice for init scripts)
+3. **Entrypoint script runs as root**:
+   - Creates directories if needed
+   - Fixes ownership to nodejs:nodejs
+   - Sets proper permissions
+4. **Script drops to nodejs user** using `su-exec`
+5. **Application runs as non-root** (secure)
 
-## One-Time Setup Script
+This is how most production containers handle volume permissions. No manual fixes needed!
 
-After creating your app in Coolify, run this once:
+## No Setup Script Needed!
 
-```bash
-#!/bin/bash
-
-# Replace with your actual app ID from Coolify
-APP_ID="your-app-id-here"
-
-VOLUME_PATH="/var/lib/coolify/applications/$APP_ID/volumes/persistent"
-
-echo "Setting up persistent storage for app: $APP_ID"
-
-# Create the directory if it doesn't exist
-sudo mkdir -p "$VOLUME_PATH"
-
-# Set ownership to UID 1001 (nodejs user)
-sudo chown -R 1001:1001 "$VOLUME_PATH"
-
-# Set permissions (rwxr-xr-x)
-sudo chmod -R 755 "$VOLUME_PATH"
-
-# Verify
-echo ""
-echo "Permissions set:"
-sudo ls -la "$VOLUME_PATH"
-echo ""
-echo "✅ Done! Now deploy your application in Coolify."
-```
-
-Save this as `setup-coolify-volume.sh`, make it executable, and run it:
-
-```bash
-chmod +x setup-coolify-volume.sh
-./setup-coolify-volume.sh
-```
+The container handles all permission setup automatically. Just deploy!
 
 ## Best Practices
 
 1. **Set up volumes BEFORE first deployment** to avoid empty database issues
-2. **Use named volumes** when possible (Docker handles permissions)
-3. **Never run containers as root** - the nodejs user (UID 1001) is safer
-4. **Monitor logs** after deployment to catch permission issues early
+2. **Use Docker-managed volumes** (don't specify host paths) for simplicity
+3. **The container starts as root** but drops to nodejs user - this is safe and standard
+4. **Monitor logs** after deployment to see the permission setup in action
 5. **Backup your database** regularly:
    ```bash
    # From Coolify server
