@@ -45,6 +45,9 @@ const app = express();
 const PORT = process.env.PORT || 3300;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
+// Trust proxy headers when behind a reverse proxy (Coolify/Traefik/nginx)
+app.set('trust proxy', 1);
+
 // Rate limiters
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
