@@ -5,4 +5,4 @@ aptPkgs = ["python3", "python3-pip", "build-essential"]
 cmds = ["npm ci"]
 
 [start]
-cmd = "node server.js"
+cmd = "cd /app && node server.js"
