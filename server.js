@@ -312,7 +312,7 @@ app.use(session({
   store: sqliteStore,
   secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: true, // Changed to true to ensure sessions are saved
+  saveUninitialized: false, // FALSE = don't save empty sessions (prevents overwriting valid sessions!)
   name: 'strata.sid',
   proxy: true, // Trust the reverse proxy for secure cookie handling
   cookie: {
@@ -675,7 +675,7 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 // ADMIN ROUTES
 
 // Login page
-app.get('/admin/login', (req, res) => {
+app.get('/admin/login', (req, res, next) => {
   logger.info('===> ADMIN LOGIN PAGE (GET)', {
     sessionID: req.sessionID,
     sessionKeys: Object.keys(req.session || {}),
@@ -689,6 +689,19 @@ app.get('/admin/login', (req, res) => {
     logger.info('Already logged in - redirecting to dashboard');
     return res.redirect('/admin/dashboard');
   }
+
+  // Log if we're about to send Set-Cookie (should NOT happen if cookie already exists!)
+  res.on('finish', () => {
+    const setCookie = res.getHeader('set-cookie');
+    if (setCookie) {
+      logger.warn('⚠️  GET /admin/login sent Set-Cookie (this overwrites existing session!)', {
+        hadCookie: !!req.headers.cookie,
+        sessionID: req.sessionID
+      });
+    } else {
+      logger.info('✅ GET /admin/login did NOT send Set-Cookie (existing session preserved)');
+    }
+  });
 
   res.render('admin_login', { error: null });
 });
