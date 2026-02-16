@@ -732,13 +732,26 @@ app.post('/admin/logout', (req, res) => {
 });
 
 // Dashboard
-app.get('/admin/dashboard', requireAuth, (req, res) => {
-  logger.info('===> DASHBOARD LOADED', {
+app.get('/admin/dashboard', (req, res, next) => {
+  // Log BEFORE auth check to see if request even arrives
+  logger.info('===> DASHBOARD REQUEST RECEIVED (before auth)', {
     sessionID: req.sessionID,
     sessionKeys: Object.keys(req.session || {}),
     isAdmin: req.session?.isAdmin,
-    hasIsAdmin: 'isAdmin' in (req.session || {})
+    hasIsAdmin: 'isAdmin' in (req.session || {}),
+    cookieHeader: req.headers.cookie ? 'present' : 'missing'
   });
+
+  // Now run auth
+  requireAuth(req, res, () => {
+    logger.info('===> DASHBOARD LOADED (after auth passed)', {
+      sessionID: req.sessionID,
+      sessionKeys: Object.keys(req.session || {}),
+      isAdmin: req.session?.isAdmin
+    });
+    next();
+  });
+}, (req, res) => {
   const { start_date, end_date } = req.query;
 
   let motions;
