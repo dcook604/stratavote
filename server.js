@@ -277,6 +277,21 @@ app.use(session({
   }
 }));
 
+// Debug middleware - log session state on every request
+app.use((req, res, next) => {
+  if (req.path.startsWith('/admin')) {
+    logger.debug('Request', {
+      method: req.method,
+      path: req.path,
+      sessionID: req.sessionID,
+      hasSession: !!req.session,
+      isAdmin: req.session?.isAdmin,
+      cookies: req.headers.cookie ? 'present' : 'missing'
+    });
+  }
+  next();
+});
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: {
@@ -333,9 +348,23 @@ app.use((req, res, next) => {
 
 // Auth middleware
 function requireAuth(req, res, next) {
+  logger.info('Auth check', {
+    path: req.path,
+    sessionID: req.sessionID,
+    hasSession: !!req.session,
+    isAdmin: req.session?.isAdmin,
+    hasCookie: !!req.headers.cookie
+  });
+
   if (req.session.isAdmin) {
     return next();
   }
+
+  logger.warn('Auth failed - redirecting to login', {
+    path: req.path,
+    sessionID: req.sessionID
+  });
+
   res.redirect('/admin/login');
 }
 
@@ -500,6 +529,14 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 
 // Login page
 app.get('/admin/login', (req, res) => {
+  logger.info('Login page accessed', {
+    sessionID: req.sessionID,
+    hasSession: !!req.session,
+    isAdmin: req.session?.isAdmin,
+    hasCookie: !!req.headers.cookie,
+    cookieNames: req.headers.cookie ? req.headers.cookie.split(';').map(c => c.trim().split('=')[0]) : []
+  });
+
   if (req.session.isAdmin) {
     return res.redirect('/admin/dashboard');
   }
@@ -510,12 +547,40 @@ app.get('/admin/login', (req, res) => {
 app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res) => {
   const { password } = req.body;
 
+  // Debug logging for login attempts
+  logger.info('Login attempt', {
+    sessionID: req.sessionID,
+    hasSession: !!req.session,
+    protocol: req.protocol,
+    secure: req.secure,
+    hostname: req.hostname,
+    forwardedProto: req.get('x-forwarded-proto'),
+    forwardedHost: req.get('x-forwarded-host'),
+    userAgent: req.get('user-agent')
+  });
+
   if (password === process.env.ADMIN_PASSWORD) {
     req.session.isAdmin = true;
-    return res.redirect('/admin/dashboard');
-  }
 
-  res.render('admin_login', { error: 'Invalid password.' });
+    // Save session explicitly and log result
+    req.session.save((err) => {
+      if (err) {
+        logger.error('Session save error', { error: err, sessionID: req.sessionID });
+        return res.render('admin_login', { error: 'Session error. Please try again.' });
+      }
+
+      logger.info('Login successful', {
+        sessionID: req.sessionID,
+        isAdmin: req.session.isAdmin,
+        cookie: req.session.cookie
+      });
+
+      return res.redirect('/admin/dashboard');
+    });
+  } else {
+    logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
+    res.render('admin_login', { error: 'Invalid password.' });
+  }
 });
 
 // Logout
