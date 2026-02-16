@@ -46,8 +46,17 @@ if (process.env.SESSION_SECRET === 'super_secret_session_key_change_in_productio
 
 const app = express();
 const PORT = process.env.PORT || 3300;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// Helper to get the base URL from request (respects proxy)
+function getBaseUrl(req) {
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  return `${proto}://${host}`;
+}
+
+// BASE_URL for logging and emails only (not for redirects)
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 // Trust proxy headers when behind a reverse proxy (Coolify/Traefik/nginx)
 app.set('trust proxy', 1);
@@ -375,8 +384,25 @@ app.use(helmet({
 // HTTPS enforcement in production
 if (process.env.NODE_ENV === 'production') {
   app.use((req, res, next) => {
-    if (!req.secure && req.get('x-forwarded-proto') !== 'https') {
-      return res.redirect(301, 'https://' + req.get('host') + req.url);
+    const forwardedProto = req.get('x-forwarded-proto');
+    const forwardedHost = req.get('x-forwarded-host');
+
+    // Check if request is already HTTPS (via proxy or direct)
+    const isHttps = req.secure || forwardedProto === 'https';
+
+    if (!isHttps) {
+      // Use forwarded host if available, otherwise fallback to req.get('host')
+      const host = forwardedHost || req.get('host');
+      const redirectUrl = `https://${host}${req.url}`;
+
+      logger.info('HTTPS REDIRECT', {
+        from: `${req.protocol}://${req.get('host')}${req.url}`,
+        to: redirectUrl,
+        forwardedProto,
+        forwardedHost
+      });
+
+      return res.redirect(301, redirectUrl);
     }
     next();
   });
@@ -675,7 +701,13 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next)
       willRedirectTo: '/admin/dashboard'
     });
 
-    // Redirect with explicit 302
+    // RELATIVE redirect (no absolute URL with localhost!)
+    logger.info('LOGIN REDIRECT', {
+      from: req.originalUrl,
+      to: '/admin/dashboard',
+      method: 'relative'
+    });
+
     return res.redirect(302, '/admin/dashboard');
   });
 });
