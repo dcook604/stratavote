@@ -267,8 +267,12 @@ app.use(session({
   name: 'strata.sid',
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    // When behind a reverse proxy (Coolify/Traefik), secure should be 'auto'
+    // or based on X-Forwarded-Proto header (handled by trust proxy)
+    secure: process.env.NODE_ENV === 'production' ? 'auto' : false,
+    // Use 'lax' instead of 'strict' to allow cookies on redirects
+    // This fixes login loops behind reverse proxies
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
