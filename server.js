@@ -894,7 +894,7 @@ app.post('/admin/motions/:id/outcome', requireAuth, (req, res) => {
   }
 });
 
-// Delete motion (Draft only)
+// Delete motion (Draft or Open with no votes)
 app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   const { id } = req.params;
   
@@ -903,8 +903,10 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
     return res.status(404).send('Motion not found');
   }
   
-  if (motion.status !== 'Draft') {
-    return res.redirect(`/admin/motions/${id}?error=Only+draft+motions+can+be+deleted`);
+  // Check if motion can be deleted
+  const stats = getMotionStats(id);
+  if (motion.status !== 'Draft' && !(motion.status === 'Open' && stats.voted === 0)) {
+    return res.redirect(`/admin/motions/${id}?error=Only+draft+motions+or+open+motions+with+no+votes+can+be+deleted`);
   }
   
   try {

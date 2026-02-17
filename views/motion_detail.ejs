@@ -152,7 +152,7 @@
             Manage Voter Tokens
           </a>
 
-          <% if (motion.status === 'Draft') { %>
+          <% if (motion.status === 'Draft' || (motion.status === 'Open' && stats.voted === 0)) { %>
             <form method="POST" action="/admin/motions/<%= motion.id %>/delete" 
                   onsubmit="return confirm('Are you sure you want to delete this motion? This action cannot be undone and will delete all associated voter tokens.')"
                   style="margin-top: 1rem;">
