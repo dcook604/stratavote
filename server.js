@@ -532,12 +532,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// Helper: check isAdmin robustly (SQLite may deserialize true as 1 or "true")
+function isAdminAuthenticated(session) {
+  if (!session) return false;
+  const val = session.isAdmin;
+  return val === true || val === 1 || val === 'true';
+}
+
 // Auth middleware
 function requireAuth(req, res, next) {
   const hasIsAdmin = 'isAdmin' in (req.session || {});
   const isAdminValue = req.session?.isAdmin;
   const isAdminTruthy = !!isAdminValue;
-  const isAdminStrictTrue = isAdminValue === true;
+  const isAuthenticated = isAdminAuthenticated(req.session);
 
   logger.info('===> AUTH CHECK', {
     path: req.path,
@@ -547,11 +554,11 @@ function requireAuth(req, res, next) {
     isAdmin: isAdminValue,
     isAdminType: typeof isAdminValue,
     isAdminTruthy: isAdminTruthy,
-    isAdminStrictTrue: isAdminStrictTrue,
-    willAllow: isAdminStrictTrue
+    isAuthenticated: isAuthenticated,
+    willAllow: isAuthenticated
   });
 
-  if (req.session && req.session.isAdmin === true) {
+  if (isAuthenticated) {
     logger.info('AUTH PASSED - Access granted');
     return next();
   }
@@ -739,7 +746,7 @@ app.get('/admin/login', (req, res, next) => {
     hasIsAdmin: 'isAdmin' in (req.session || {}),
     isAdmin: req.session?.isAdmin,
     hasCookie: !!req.headers.cookie,
-    willRedirect: hasSessionCookie && req.session && req.session.isAdmin === true
+    willRedirect: hasSessionCookie && isAdminAuthenticated(req.session)
   });
 
   // Register finish handler BEFORE any early returns (so it fires for redirects too)
@@ -764,9 +771,8 @@ app.get('/admin/login', (req, res, next) => {
   });
 
   // Only check session if client already has a session cookie
-  // IMPORTANT: Must use strict === true check, same as requireAuth(),
-  // otherwise truthy values (e.g. string "true" from SQLite) cause a redirect loop
-  if (hasSessionCookie && req.session && req.session.isAdmin === true) {
+  // Uses isAdminAuthenticated() to handle SQLite deserializing true as 1 or "true"
+  if (hasSessionCookie && isAdminAuthenticated(req.session)) {
     logger.info('Already logged in - redirecting to dashboard');
     return res.redirect('/admin/dashboard');
   }
