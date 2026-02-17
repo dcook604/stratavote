@@ -340,9 +340,30 @@ logger.info('Session middleware configured', {
   rolling: false
 });
 
-// Session cookie handling note:
-// resave: false, rolling: false, saveUninitialized: false in session config
-// already prevent unnecessary cookie overwrites. No monkey-patching needed.
+// Stale session recovery: if browser sends a strata.sid cookie but the session
+// store can't find it (e.g. after redeploy wiped sessions DB), the session object
+// will be new/empty. Regenerate so the browser gets a fresh valid cookie.
+app.use((req, res, next) => {
+  const hasCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
+  const isNewSession = req.session && !req.session.isAdmin && req.sessionID;
+
+  // If browser sent a session cookie but session has no data, it's stale
+  if (hasCookie && isNewSession && Object.keys(req.session).length <= 1) {
+    // Only the 'cookie' key exists — session data was lost
+    return req.session.regenerate((err) => {
+      if (err) {
+        logger.error('Session regeneration error', { error: err.message });
+        return next(err);
+      }
+      logger.info('Stale session detected and regenerated', {
+        newSessionID: req.sessionID,
+        path: req.path
+      });
+      next();
+    });
+  }
+  next();
+});
 
 // GLOBAL HTTP LOGGER - Logs ALL requests with session details
 app.use((req, res, next) => {
@@ -492,11 +513,9 @@ app.use((err, req, res, next) => {
     sessionID: req.sessionID
   });
 
-  // For admin routes, redirect back with error message
+  // For admin routes, redirect to login (session/CSRF likely stale after redeploy)
   if (req.path.startsWith('/admin/')) {
-    const referer = req.get('referer');
-    const redirectTo = referer || '/admin/dashboard';
-    return res.redirect(redirectTo);
+    return res.redirect('/admin/login');
   }
 
   res.status(403).send('Form expired. Please go back and try again.');
