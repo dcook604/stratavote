@@ -136,7 +136,9 @@ const motionQueries = {
 
   updateOutcome: db.prepare(`
     UPDATE motions SET outcome = ?, outcome_notes = ? WHERE id = ?
-  `)
+  `),
+
+  delete: db.prepare('DELETE FROM motions WHERE id = ?')
 };
 
 // Prepared statements for voter tokens
@@ -160,7 +162,9 @@ const tokenQueries = {
     UPDATE voter_tokens
     SET email_sent = ?, email_sent_at = ?, email_error = ?
     WHERE id = ?
-  `)
+  `),
+
+  deleteByMotion: db.prepare('DELETE FROM voter_tokens WHERE motion_id = ?')
 };
 
 // Prepared statements for ballots

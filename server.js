@@ -894,6 +894,37 @@ app.post('/admin/motions/:id/outcome', requireAuth, (req, res) => {
   }
 });
 
+// Delete motion (Draft only)
+app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
+  const { id } = req.params;
+  
+  const motion = motionQueries.getById.get(id);
+  if (!motion) {
+    return res.status(404).send('Motion not found');
+  }
+  
+  if (motion.status !== 'Draft') {
+    return res.redirect(`/admin/motions/${id}?error=Only+draft+motions+can+be+deleted`);
+  }
+  
+  try {
+    // Delete in transaction to maintain referential integrity
+    const transaction = db.transaction(() => {
+      // Delete voter tokens first (foreign key constraint)
+      tokenQueries.deleteByMotion.run(id);
+      // Delete the motion
+      motionQueries.delete.run(id);
+    });
+    
+    transaction();
+    logger.info('Motion deleted', { motionId: id, title: motion.title });
+    res.redirect('/admin/dashboard?success=Motion+deleted+successfully');
+  } catch (err) {
+    logger.error('Motion deletion error:', err);
+    res.redirect(`/admin/motions/${id}?error=Failed+to+delete+motion`);
+  }
+});
+
 // Token management page
 app.get('/admin/motions/:id/tokens', requireAuth, (req, res) => {
   const { id } = req.params;
