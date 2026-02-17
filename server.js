@@ -1,7 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const SQLiteStore = require('connect-sqlite3')(session);
+const Database = require('better-sqlite3');
+const SqliteStore = require('better-sqlite3-session-store')(session);
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -300,17 +301,18 @@ logger.info('Session store configuration', {
   dbPath: path.join(sessionDir, 'sessions.db')
 });
 
-// Create SQLite store with error handling
-const sqliteStore = new SQLiteStore({
-  db: 'sessions.db',
-  dir: sessionDir,
-  table: 'sessions',
-  concurrentDB: true
-});
+// Create a dedicated better-sqlite3 instance for the session store
+const sessionsDbPath = path.join(sessionDir, 'sessions.db');
+const sessionsDb = new Database(sessionsDbPath);
+sessionsDb.pragma('journal_mode = WAL');
+logger.info('Sessions DB opened', { path: sessionsDbPath });
 
-// Log SQLite store errors
-sqliteStore.on('error', (err) => {
-  logger.error('SQLite session store error:', err);
+const sqliteStore = new SqliteStore({
+  client: sessionsDb,
+  expired: {
+    clear: true,
+    intervalMs: 15 * 60 * 1000 // Clear expired sessions every 15 minutes
+  }
 });
 
 app.use(session({
