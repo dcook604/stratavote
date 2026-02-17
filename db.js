@@ -86,7 +86,7 @@ function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS voter_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      motion_id INTEGER NOT NULL REFERENCES motions(id),
+      motion_id TEXT NOT NULL REFERENCES motions(id),
       token TEXT NOT NULL UNIQUE,
       recipient_name TEXT NULL,
       recipient_email TEXT NULL,
@@ -101,7 +101,7 @@ function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS ballots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      motion_id INTEGER NOT NULL REFERENCES motions(id),
+      motion_id TEXT NOT NULL REFERENCES motions(id),
       voter_token_id INTEGER NOT NULL UNIQUE REFERENCES voter_tokens(id),
       choice TEXT NOT NULL,
       submitted_at TEXT NOT NULL,
@@ -243,6 +243,112 @@ function initDatabase() {
   } catch (err) {
     const logger = require('./logger');
     logger.error('Error migrating motions table:', err);
+    // Ensure foreign keys are re-enabled even on error
+    try {
+      db.pragma('foreign_keys = ON');
+    } catch (e) {
+      // Ignore
+    }
+    throw err;
+  }
+
+  // Migration: Update voter_tokens and ballots to use TEXT motion_id for UUID compatibility
+  try {
+    const voterTokenInfo = db.pragma('table_info(voter_tokens)');
+    const ballotInfo = db.pragma('table_info(ballots)');
+    const motionInfo = db.pragma('table_info(motions)');
+    
+    const motionIdIsText = motionInfo.some(col => col.name === 'id' && col.type === 'TEXT');
+    const voterTokenMotionIdIsInteger = voterTokenInfo.some(col => col.name === 'motion_id' && col.type === 'INTEGER');
+    const ballotMotionIdIsInteger = ballotInfo.some(col => col.name === 'motion_id' && col.type === 'INTEGER');
+    
+    if (motionIdIsText && (voterTokenMotionIdIsInteger || ballotMotionIdIsInteger)) {
+      const logger = require('./logger');
+      logger.info('Starting migration to update foreign key references to TEXT type');
+      
+      // Disable foreign keys during migration
+      db.pragma('foreign_keys = OFF');
+      
+      if (voterTokenMotionIdIsInteger) {
+        // Recreate voter_tokens table with TEXT motion_id
+        db.exec('ALTER TABLE voter_tokens RENAME TO voter_tokens_old');
+        
+        db.exec(`
+          CREATE TABLE voter_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            motion_id TEXT NOT NULL REFERENCES motions(id),
+            token TEXT NOT NULL UNIQUE,
+            recipient_name TEXT NULL,
+            recipient_email TEXT NULL,
+            unit_number TEXT NULL,
+            status TEXT NOT NULL CHECK(status IN ('Active', 'Used', 'Revoked')),
+            used_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            email_sent BOOLEAN DEFAULT 0,
+            email_sent_at TEXT NULL,
+            email_error TEXT NULL
+          );
+        `);
+        
+        // Copy data (motion_id should already be UUID from previous migration)
+        db.exec(`
+          INSERT INTO voter_tokens (
+            id, motion_id, token, recipient_name, recipient_email, unit_number,
+            status, used_at, created_at, email_sent, email_sent_at, email_error
+          )
+          SELECT 
+            id, motion_id, token, recipient_name, recipient_email, unit_number,
+            status, used_at, created_at, email_sent, email_sent_at, email_error
+          FROM voter_tokens_old;
+        `);
+        
+        db.exec('DROP TABLE voter_tokens_old');
+        logger.info('Migrated voter_tokens table to TEXT motion_id');
+      }
+      
+      if (ballotMotionIdIsInteger) {
+        // Recreate ballots table with TEXT motion_id
+        db.exec('ALTER TABLE ballots RENAME TO ballots_old');
+        
+        db.exec(`
+          CREATE TABLE ballots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            motion_id TEXT NOT NULL REFERENCES motions(id),
+            voter_token_id INTEGER NOT NULL REFERENCES voter_tokens(id),
+            choice TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            user_agent TEXT NULL,
+            ip_hash TEXT NULL
+          );
+        `);
+        
+        // Copy data (motion_id should already be UUID from previous migration)
+        db.exec(`
+          INSERT INTO ballots (
+            id, motion_id, voter_token_id, choice, submitted_at, user_agent, ip_hash
+          )
+          SELECT 
+            id, motion_id, voter_token_id, choice, submitted_at, user_agent, ip_hash
+          FROM ballots_old;
+        `);
+        
+        db.exec('DROP TABLE ballots_old');
+        logger.info('Migrated ballots table to TEXT motion_id');
+      }
+      
+      // Recreate indexes
+      db.exec('CREATE INDEX IF NOT EXISTS idx_voter_tokens_motion ON voter_tokens(motion_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_voter_tokens_token ON voter_tokens(token)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_ballots_motion ON ballots(motion_id)');
+      
+      // Re-enable foreign keys
+      db.pragma('foreign_keys = ON');
+      
+      logger.info('Successfully migrated foreign key references to TEXT type');
+    }
+  } catch (err) {
+    const logger = require('./logger');
+    logger.error('Error migrating foreign key references:', err);
     // Ensure foreign keys are re-enabled even on error
     try {
       db.pragma('foreign_keys = ON');
