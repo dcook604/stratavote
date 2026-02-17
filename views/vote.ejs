@@ -26,7 +26,6 @@
         </div>
 
         <form method="POST" action="/vote/<%= motion.id %>" class="vote-form">
-          <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
           <input type="hidden" name="token" value="<%= token.token %>">
 
           <h3>Select your vote:</h3>
