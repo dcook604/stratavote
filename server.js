@@ -280,6 +280,10 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Cookie parser MUST come before session middleware
+app.use(cookieParser());
+
 // Determine session storage directory
 const persistentDir = path.join(__dirname, 'persistent');
 const sessionDir = fs.existsSync(persistentDir) ? persistentDir : __dirname;
@@ -314,6 +318,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false, // FALSE = don't save empty sessions (prevents overwriting valid sessions!)
+  rolling: false, // FALSE = don't reset cookie expiry on every request (only on session modification)
   name: 'strata.sid',
   proxy: true, // Trust the reverse proxy for secure cookie handling
   cookie: {
@@ -331,7 +336,44 @@ logger.info('Session middleware configured', {
   store: 'SQLiteStore',
   cookieSecure: IS_PRODUCTION,
   cookieSameSite: 'lax',
-  trustProxy: true
+  trustProxy: true,
+  rolling: false
+});
+
+// HARD GUARD: Never overwrite an existing session cookie
+// If the request already has a strata.sid cookie, prevent sending a new one
+app.use((req, res, next) => {
+  const hasCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
+
+  if (hasCookie) {
+    const originalSetHeader = res.setHeader.bind(res);
+    res.setHeader = function(name, value) {
+      if (name.toLowerCase() === 'set-cookie') {
+        // Filter out strata.sid cookies if client already has one
+        if (Array.isArray(value)) {
+          value = value.filter(cookie => !cookie.startsWith('strata.sid='));
+          if (value.length === 0) {
+            logger.info('GUARD: Blocked attempt to overwrite existing strata.sid cookie', {
+              path: req.path,
+              method: req.method,
+              sessionID: req.sessionID
+            });
+            return; // Don't set header if no cookies left
+          }
+        } else if (typeof value === 'string' && value.startsWith('strata.sid=')) {
+          logger.info('GUARD: Blocked attempt to overwrite existing strata.sid cookie', {
+            path: req.path,
+            method: req.method,
+            sessionID: req.sessionID
+          });
+          return; // Don't set header
+        }
+      }
+      return originalSetHeader(name, value);
+    };
+  }
+
+  next();
 });
 
 // CRITICAL FIX: Override cookie SameSite on every response
@@ -404,9 +446,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
-// Cookie parser (required for cookie-based CSRF tokens)
-app.use(cookieParser());
 
 // Security headers
 app.use(helmet({
@@ -689,39 +728,46 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 
 // Login page
 app.get('/admin/login', (req, res, next) => {
+  // Check if client has session cookie before accessing req.session
+  // This prevents creating a new session when none exists
+  const hasSessionCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
+
   logger.info('===> ADMIN LOGIN PAGE (GET)', {
     sessionID: req.sessionID,
+    hasSessionCookie: hasSessionCookie,
     sessionKeys: Object.keys(req.session || {}),
     hasIsAdmin: 'isAdmin' in (req.session || {}),
     isAdmin: req.session?.isAdmin,
     hasCookie: !!req.headers.cookie,
-    willRedirect: !!req.session?.isAdmin
+    willRedirect: hasSessionCookie && req.session && req.session.isAdmin
   });
 
-  if (req.session.isAdmin) {
-    logger.info('Already logged in - redirecting to dashboard');
-    return res.redirect('/admin/dashboard');
-  }
-
-  // Log if we're about to send Set-Cookie for strata.sid (should NOT happen if cookie already exists!)
+  // Register finish handler BEFORE any early returns (so it fires for redirects too)
   res.on('finish', () => {
     const setCookie = res.getHeader('set-cookie');
-    // Check specifically for strata.sid session cookie (ignore CSRF cookie)
-    const hasSessionCookie = setCookie && (
+    const sentSessionCookie = setCookie && (
       Array.isArray(setCookie)
         ? setCookie.some(c => c.startsWith('strata.sid='))
         : setCookie.startsWith('strata.sid=')
     );
 
-    if (hasSessionCookie) {
-      logger.warn('⚠️  GET /admin/login sent Set-Cookie for strata.sid (this overwrites existing session!)', {
-        hadCookie: !!req.headers.cookie,
+    if (sentSessionCookie) {
+      logger.error('🚨 GUARD FAILED: GET /admin/login sent Set-Cookie for strata.sid despite guard!', {
+        hadExistingCookie: hasSessionCookie,
         sessionID: req.sessionID
       });
+    } else if (hasSessionCookie) {
+      logger.info('✅ GET /admin/login preserved existing session (no Set-Cookie sent)');
     } else {
-      logger.info('✅ GET /admin/login did NOT send Set-Cookie for strata.sid (existing session preserved)');
+      logger.info('✅ GET /admin/login: No session cookie (expected for first visit)');
     }
   });
+
+  // Only check session if client already has a session cookie
+  if (hasSessionCookie && req.session && req.session.isAdmin) {
+    logger.info('Already logged in - redirecting to dashboard');
+    return res.redirect('/admin/dashboard');
+  }
 
   res.render('admin_login', { error: null });
 });
@@ -788,27 +834,15 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next)
       willRedirectTo: '/admin/dashboard'
     });
 
-    // CLIENT-SIDE REDIRECT instead of 302 to ensure cookie is accepted first
-    // Browser was not following 302 redirect correctly with new cookie
-    logger.info('LOGIN SUCCESS - Using client-side redirect', {
+    // Server-side 302 redirect now works correctly with session fixes
+    // (rolling:false, saveUninitialized:false, hard guard prevent cookie overwrites)
+    logger.info('LOGIN SUCCESS - Redirecting to dashboard', {
       from: req.originalUrl,
       to: '/admin/dashboard',
-      method: 'meta-refresh'
+      method: '302'
     });
 
-    return res.status(200).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta http-equiv="refresh" content="0;url=/admin/dashboard">
-        <title>Login Successful</title>
-      </head>
-      <body>
-        <p>Login successful! Redirecting to dashboard...</p>
-        <script>window.location.href = '/admin/dashboard';</script>
-      </body>
-      </html>
-    `);
+    return res.redirect('/admin/dashboard');
   });
 });
 
