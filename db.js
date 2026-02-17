@@ -578,6 +578,27 @@ const ballotQueries = {
     ORDER BY count DESC
   `),
 
+  getVoterStatusByMotion: db.prepare(`
+    SELECT
+      vt.id AS voter_token_id,
+      vt.recipient_name,
+      vt.recipient_email,
+      vt.unit_number,
+      vt.status AS token_status,
+      vt.used_at,
+      b.choice,
+      b.submitted_at
+    FROM voter_tokens vt
+    LEFT JOIN ballots b ON b.voter_token_id = vt.id
+    WHERE vt.motion_id = ?
+      AND vt.status != 'Revoked'
+    ORDER BY
+      CASE WHEN vt.recipient_email IS NULL OR trim(vt.recipient_email) = '' THEN 1 ELSE 0 END,
+      lower(vt.recipient_email),
+      lower(vt.recipient_name),
+      vt.id
+  `),
+
   existsForToken: db.prepare('SELECT 1 FROM ballots WHERE voter_token_id = ? LIMIT 1')
 };
 

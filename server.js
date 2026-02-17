@@ -883,10 +883,12 @@ app.get('/admin/motions/:id', requireAuth, (req, res) => {
 
   motion.options = JSON.parse(motion.options_json);
   const stats = getMotionStats(id);
+  const voterStatus = ballotQueries.getVoterStatusByMotion.all(id);
 
   res.render('motion_detail', {
     motion,
     stats,
+    voterStatus,
     success: req.query.success || null,
     error: req.query.error || null
   });

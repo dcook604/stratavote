@@ -126,6 +126,46 @@
               </tbody>
             </table>
 
+            <% if (voterStatus && voterStatus.length > 0) { %>
+              <h3>Individual Voting Status</h3>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Unit</th>
+                    <th>Status</th>
+                    <th>Vote</th>
+                    <th>Submitted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% voterStatus.forEach(v => { %>
+                    <tr>
+                      <td><%= v.recipient_name || '-' %></td>
+                      <td><%= v.recipient_email || '-' %></td>
+                      <td><%= v.unit_number || '-' %></td>
+                      <td>
+                        <% if (v.submitted_at) { %>
+                          <span class="badge badge-used">Voted</span>
+                        <% } else { %>
+                          <span class="badge badge-secondary">Not Voted</span>
+                        <% } %>
+                      </td>
+                      <td><%= v.choice || '-' %></td>
+                      <td>
+                        <% if (v.submitted_at) { %>
+                          <%= new Date(v.submitted_at).toLocaleString() %>
+                        <% } else { %>
+                          -
+                        <% } %>
+                      </td>
+                    </tr>
+                  <% }) %>
+                </tbody>
+              </table>
+            <% } %>
+
             <a href="/admin/motions/<%= motion.id %>/export.csv"
                class="btn btn-secondary"
                onclick="return confirm('This export contains personal information (names, emails). Ensure you handle it securely. Continue?')">
