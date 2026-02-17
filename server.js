@@ -24,9 +24,17 @@ const {
   generateUUID,
   generateMotionRef,
   verifyAdminPassword,
-  updateAdminPassword
+  updateAdminPassword,
+  getSetting,
+  setSetting,
+  ensureResultsEmailNotification,
+  getPendingNotifications,
+  markNotificationSent,
+  markNotificationFailed
 } = require('./db');
 const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
+const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
+const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails } = require('./services/notificationWorker');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -345,6 +353,16 @@ const sqliteStore = new SqliteStore({
     intervalMs: 15 * 60 * 1000 // Clear expired sessions every 15 minutes
   }
 });
+
+// Background worker: close motions when time ends and send results emails via outbox
+setInterval(async () => {
+  try {
+    sweepAndEnqueueCompletedMotions();
+    await processPendingResultsEmails({ baseUrl: BASE_URL, limit: 25 });
+  } catch (err) {
+    logger.error('notification worker tick failed', { error: err.message });
+  }
+}, 60 * 1000);
 
 app.use(session({
   store: sqliteStore,
@@ -704,6 +722,13 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 
     submitVote(motion.id, tokenRecord.id, choice, userAgent, ipHash);
 
+    // Opportunistic completion check: the worker will apply end-time/all-voted/early-threshold rules.
+    try {
+      sweepAndEnqueueCompletedMotions();
+    } catch (e) {
+      logger.error('post-vote completion check failed', { motionId: motion.id, error: e.message });
+    }
+
     res.render('vote_result', {
       success: true,
       message: 'Your vote has been recorded successfully. Thank you for participating.'
@@ -1042,6 +1067,7 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
   }
 
   let created = 0;
+  let skippedDuplicates = 0;
   let emailsSent = 0;
   let emailsFailed = 0;
 
@@ -1051,22 +1077,40 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
     for (const recipient of recipientList) {
       const { name, email, unit } = recipient;
 
+      // Prevent duplicate tokens for the same motion + email (case-insensitive)
+      if (email) {
+        const existing = tokenQueries.getActiveByMotionEmail.get(id, email);
+        if (existing) {
+          skippedDuplicates++;
+          continue;
+        }
+      }
+
       const token = crypto.randomBytes(24).toString('base64url');
       const created_at = new Date().toISOString();
 
       // Create token with email status fields
-      const result = tokenQueries.create.run(
-        id,
-        token,
-        name,
-        email,
-        unit,
-        'Active',
-        created_at,
-        0, // email_sent
-        null, // email_sent_at
-        null // email_error
-      );
+      let result;
+      try {
+        result = tokenQueries.create.run(
+          id,
+          token,
+          name,
+          email,
+          unit,
+          'Active',
+          created_at,
+          0, // email_sent
+          null, // email_sent_at
+          null // email_error
+        );
+      } catch (e) {
+        if (e && e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          skippedDuplicates++;
+          continue;
+        }
+        throw e;
+      }
       created++;
 
       // Try to send email if configured and email address is provided
@@ -1110,6 +1154,9 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
 
     // Build success message
     let message = `Created ${created} token(s)`;
+    if (skippedDuplicates > 0) {
+      message += `. Skipped ${skippedDuplicates} duplicate(s)`;
+    }
     if (emailConfigured) {
       message += `. Sent ${emailsSent} email(s)`;
       if (emailsFailed > 0) {
@@ -1382,11 +1429,75 @@ app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
 
 // Admin Settings page
 app.get('/admin/settings', requireAuth, (req, res) => {
+  const property_manager_name = getSetting('property_manager_name') || '';
+  const property_manager_email = getSetting('property_manager_email') || '';
   res.render('admin_settings', { 
     error: null, 
     success: null,
-    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
+    property_manager_name,
+    property_manager_email
   });
+});
+
+function renderAdminSettings(req, res, { error = null, success = null, property_manager_name, property_manager_email } = {}) {
+  const pmName = typeof property_manager_name === 'string' ? property_manager_name : (getSetting('property_manager_name') || '');
+  const pmEmail = typeof property_manager_email === 'string' ? property_manager_email : (getSetting('property_manager_email') || '');
+
+  return res.render('admin_settings', {
+    error,
+    success,
+    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
+    property_manager_name: pmName,
+    property_manager_email: pmEmail
+  });
+}
+
+app.post('/admin/settings/property-manager', requireAuth, (req, res) => {
+  const { property_manager_name, property_manager_email } = req.body;
+
+  const name = (property_manager_name || '').trim();
+  const email = (property_manager_email || '').trim();
+
+  if (!email) {
+    return renderAdminSettings(req, res, {
+      error: 'Property Manager email is required',
+      property_manager_name: name,
+      property_manager_email: email
+    });
+  }
+
+  const emailSchema = Joi.string().email().max(200);
+  const { error } = emailSchema.validate(email);
+  if (error) {
+    return renderAdminSettings(req, res, {
+      error: 'Property Manager email must be a valid email address',
+      property_manager_name: name,
+      property_manager_email: email
+    });
+  }
+
+  try {
+    setSetting('property_manager_name', name);
+    setSetting('property_manager_email', email);
+    logger.info('Property Manager settings updated', {
+      sessionId: req.session.id,
+      ip: req.ip
+    });
+
+    return renderAdminSettings(req, res, {
+      success: 'Property Manager settings updated successfully!',
+      property_manager_name: name,
+      property_manager_email: email
+    });
+  } catch (err) {
+    logger.error('Failed to update Property Manager settings', err);
+    return renderAdminSettings(req, res, {
+      error: 'Failed to update Property Manager settings. Please try again.',
+      property_manager_name: name,
+      property_manager_email: email
+    });
+  }
 });
 
 // Change Admin Password
@@ -1395,27 +1506,15 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
   
   // Validate input
   if (!current_password || !new_password || !confirm_password) {
-    return res.render('admin_settings', {
-      error: 'All fields are required',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'All fields are required' });
   }
   
   if (new_password.length < 8) {
-    return res.render('admin_settings', {
-      error: 'New password must be at least 8 characters long',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'New password must be at least 8 characters long' });
   }
   
   if (new_password !== confirm_password) {
-    return res.render('admin_settings', {
-      error: 'New passwords do not match',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'New passwords do not match' });
   }
   
   // Verify current password
@@ -1424,20 +1523,12 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
       sessionId: req.session.id,
       ip: req.ip
     });
-    return res.render('admin_settings', {
-      error: 'Current password is incorrect',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'Current password is incorrect' });
   }
   
   // Check if new password is the same as current
   if (verifyAdminPassword(new_password)) {
-    return res.render('admin_settings', {
-      error: 'New password must be different from current password',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'New password must be different from current password' });
   }
   
   // Update the password in real-time
@@ -1449,19 +1540,11 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
       ip: req.ip,
       timestamp: new Date().toISOString()
     });
-    
-    res.render('admin_settings', {
-      error: null,
-      success: 'Password updated successfully!',
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+
+    return renderAdminSettings(req, res, { success: 'Password updated successfully!' });
   } catch (err) {
     logger.error('Failed to update admin password:', err);
-    res.render('admin_settings', {
-      error: 'Failed to update password. Please try again.',
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: 'Failed to update password. Please try again.' });
   }
 });
 
@@ -1475,30 +1558,18 @@ app.post('/admin/settings/test-email', requireAuth, async (req, res) => {
         sessionId: req.session.id,
         ip: req.ip
       });
-      res.render('admin_settings', {
-        error: null,
-        success: 'Email configuration is working correctly!',
-        dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-      });
+      return renderAdminSettings(req, res, { success: 'Email configuration is working correctly!' });
     } else {
       logger.warn('Email configuration test failed', {
         error: result.error,
         sessionId: req.session.id,
         ip: req.ip
       });
-      res.render('admin_settings', {
-        error: `Email test failed: ${result.error}`,
-        success: null,
-        dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-      });
+      return renderAdminSettings(req, res, { error: `Email test failed: ${result.error}` });
     }
   } catch (err) {
     logger.error('Email test error:', err);
-    res.render('admin_settings', {
-      error: `Email test error: ${err.message}`,
-      success: null,
-      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-    });
+    return renderAdminSettings(req, res, { error: `Email test error: ${err.message}` });
   }
 });
 

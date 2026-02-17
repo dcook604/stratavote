@@ -136,6 +136,66 @@ function initDatabase() {
     // Columns might already exist, ignore error
   }
 
+  // Prevent duplicate (non-revoked) tokens per motion+email (case-insensitive)
+  // Also clean up existing duplicates by revoking all but the newest token.
+  try {
+    const logger = require('./logger');
+
+    // Revoke duplicates (keep newest id per motion/email)
+    const dupPairs = db.prepare(`
+      SELECT motion_id, lower(recipient_email) AS email_key, COUNT(*) AS cnt
+      FROM voter_tokens
+      WHERE recipient_email IS NOT NULL
+        AND trim(recipient_email) != ''
+        AND status != 'Revoked'
+      GROUP BY motion_id, email_key
+      HAVING cnt > 1
+    `).all();
+
+    if (dupPairs.length > 0) {
+      const revokeStmt = db.prepare(`
+        UPDATE voter_tokens
+        SET status = 'Revoked'
+        WHERE id IN (
+          SELECT id
+          FROM voter_tokens
+          WHERE motion_id = ?
+            AND lower(recipient_email) = ?
+            AND status != 'Revoked'
+          ORDER BY id DESC
+          LIMIT -1 OFFSET 1
+        )
+      `);
+
+      let revokedCount = 0;
+      for (const pair of dupPairs) {
+        const result = revokeStmt.run(pair.motion_id, pair.email_key);
+        revokedCount += result.changes;
+      }
+      logger.warn('Revoked duplicate voter tokens (keeping newest per motion/email)', {
+        pairs: dupPairs.length,
+        revokedCount
+      });
+    }
+
+    // Enforce uniqueness going forward
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_voter_tokens_motion_email_active
+      ON voter_tokens(motion_id, lower(recipient_email))
+      WHERE recipient_email IS NOT NULL
+        AND trim(recipient_email) != ''
+        AND status != 'Revoked';
+    `);
+  } catch (err) {
+    // Best-effort: don't prevent app startup if this fails on an older SQLite build
+    try {
+      const logger = require('./logger');
+      logger.error('Failed to enforce unique voter tokens per motion/email', { error: err.message });
+    } catch (e) {
+      // ignore
+    }
+  }
+
   // Migration: Update motions table to use UUID and motion_ref
   try {
     const tableInfo = db.pragma('table_info(motions)');
@@ -383,6 +443,32 @@ function initDatabase() {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS motion_notifications (
+      id TEXT PRIMARY KEY,
+      motion_id TEXT NOT NULL REFERENCES motions(id),
+      type TEXT NOT NULL CHECK(type IN ('RESULTS_EMAIL')),
+      status TEXT NOT NULL CHECK(status IN ('PENDING', 'SENT', 'FAILED')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NULL,
+      created_at TEXT NOT NULL,
+      sent_at TEXT NULL,
+      last_error TEXT NULL,
+      UNIQUE(motion_id, type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_motion_notifications_status ON motion_notifications(status);
+    CREATE INDEX IF NOT EXISTS idx_motion_notifications_next_attempt ON motion_notifications(next_attempt_at);
+  `);
+
   // Initialize admin password if not exists
   const adminSettings = db.prepare('SELECT * FROM admin_settings WHERE id = 1').get();
   if (!adminSettings && process.env.ADMIN_PASSWORD) {
@@ -442,6 +528,17 @@ const tokenQueries = {
   getById: db.prepare('SELECT * FROM voter_tokens WHERE id = ?'),
 
   getByMotion: db.prepare('SELECT * FROM voter_tokens WHERE motion_id = ? ORDER BY created_at DESC'),
+
+  getActiveByMotionEmail: db.prepare(`
+    SELECT *
+    FROM voter_tokens
+    WHERE motion_id = ?
+      AND recipient_email IS NOT NULL
+      AND lower(recipient_email) = lower(?)
+      AND status != 'Revoked'
+    ORDER BY id DESC
+    LIMIT 1
+  `),
 
   markUsed: db.prepare('UPDATE voter_tokens SET status = ?, used_at = ? WHERE id = ?'),
 
@@ -512,6 +609,47 @@ const adminQueries = {
   `)
 };
 
+const appSettingsQueries = {
+  get: db.prepare('SELECT value FROM app_settings WHERE key = ?'),
+  upsert: db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `)
+};
+
+const motionNotificationQueries = {
+  ensurePending: db.prepare(`
+    INSERT INTO motion_notifications (
+      id, motion_id, type, status, attempts, next_attempt_at, created_at
+    ) VALUES (?, ?, 'RESULTS_EMAIL', 'PENDING', 0, NULL, ?)
+    ON CONFLICT(motion_id, type) DO NOTHING
+  `),
+
+  getPendingEligible: db.prepare(`
+    SELECT *
+    FROM motion_notifications
+    WHERE status IN ('PENDING', 'FAILED')
+      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+    ORDER BY created_at ASC
+    LIMIT ?
+  `),
+
+  markSent: db.prepare(`
+    UPDATE motion_notifications
+    SET status = 'SENT', sent_at = ?, last_error = NULL
+    WHERE id = ?
+  `),
+
+  markFailed: db.prepare(`
+    UPDATE motion_notifications
+    SET status = 'FAILED', attempts = ?, next_attempt_at = ?, last_error = ?
+    WHERE id = ?
+  `)
+};
+
 // Transaction wrapper for vote submission
 function submitVote(motionId, tokenId, choice, userAgent, ipHash) {
   try {
@@ -537,16 +675,32 @@ function submitVote(motionId, tokenId, choice, userAgent, ipHash) {
 
 // Get motion statistics
 function getMotionStats(motionId) {
-  const tokenCount = db.prepare('SELECT COUNT(*) as count FROM voter_tokens WHERE motion_id = ? AND status != ?')
-    .get(motionId, 'Revoked');
+  const tokenDistinctEmailCount = db.prepare(`
+    SELECT COUNT(DISTINCT lower(recipient_email)) as count
+    FROM voter_tokens
+    WHERE motion_id = ?
+      AND status != 'Revoked'
+      AND recipient_email IS NOT NULL
+      AND trim(recipient_email) != ''
+  `).get(motionId);
+
+  const tokenNoEmailCount = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM voter_tokens
+    WHERE motion_id = ?
+      AND status != 'Revoked'
+      AND (recipient_email IS NULL OR trim(recipient_email) = '')
+  `).get(motionId);
+
+  const eligibleCount = (tokenDistinctEmailCount?.count || 0) + (tokenNoEmailCount?.count || 0);
 
   const ballotCount = ballotQueries.countByMotion.get(motionId);
   const results = ballotQueries.getResultsByMotion.all(motionId);
 
   return {
-    eligible: tokenCount.count,
+    eligible: eligibleCount,
     voted: ballotCount.count,
-    remaining: tokenCount.count - ballotCount.count,
+    remaining: eligibleCount - ballotCount.count,
     results
   };
 }
@@ -571,6 +725,31 @@ function updateAdminPassword(newPassword, updatedBy) {
   );
 }
 
+function getSetting(key) {
+  const row = appSettingsQueries.get.get(key);
+  return row ? row.value : null;
+}
+
+function setSetting(key, value) {
+  return appSettingsQueries.upsert.run(key, value, new Date().toISOString());
+}
+
+function ensureResultsEmailNotification(motionId) {
+  return motionNotificationQueries.ensurePending.run(generateUUID(), motionId, new Date().toISOString());
+}
+
+function getPendingNotifications(nowIso, limit) {
+  return motionNotificationQueries.getPendingEligible.all(nowIso, limit);
+}
+
+function markNotificationSent(notificationId) {
+  return motionNotificationQueries.markSent.run(new Date().toISOString(), notificationId);
+}
+
+function markNotificationFailed(notificationId, attempts, nextAttemptAtIso, lastError) {
+  return motionNotificationQueries.markFailed.run(attempts, nextAttemptAtIso, lastError, notificationId);
+}
+
 module.exports = {
   db,
   motionQueries,
@@ -578,6 +757,8 @@ module.exports = {
   ballotQueries,
   councilQueries,
   adminQueries,
+  appSettingsQueries,
+  motionNotificationQueries,
   submitVote,
   getMotionStats,
   generateUUID,
@@ -585,5 +766,11 @@ module.exports = {
   hashPassword,
   verifyPassword,
   verifyAdminPassword,
-  updateAdminPassword
+  updateAdminPassword,
+  getSetting,
+  setSetting,
+  ensureResultsEmailNotification,
+  getPendingNotifications,
+  markNotificationSent,
+  markNotificationFailed
 };

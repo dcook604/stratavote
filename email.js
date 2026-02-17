@@ -10,6 +10,36 @@ function isEmailConfigured() {
   );
 }
 
+async function sendGenericEmail({ to, subject, text, html }) {
+  if (!isEmailConfigured()) {
+    logger.info('Email not configured, skipping email send');
+    throw new Error('Email not configured');
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    throw new Error('Failed to create email transporter');
+  }
+
+  const recipients = Array.isArray(to) ? to : [to];
+  const filtered = recipients.map(r => (r || '').trim()).filter(Boolean);
+  if (filtered.length === 0) {
+    throw new Error('No recipients provided');
+  }
+
+  const fromName = process.env.SMTP_FROM_NAME || 'Strata Council';
+  const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+  const from = process.env.SMTP_FROM || `"${fromName}" <${fromEmail}>`;
+
+  await transporter.sendMail({
+    from,
+    to: filtered.join(', '),
+    subject,
+    text,
+    html
+  });
+}
+
 // Create transporter (lazy initialization)
 let transporter = null;
 function getTransporter() {
@@ -277,5 +307,6 @@ async function testEmailConfig() {
 module.exports = {
   isEmailConfigured,
   sendVotingLink,
-  testEmailConfig
+  testEmailConfig,
+  sendGenericEmail
 };
