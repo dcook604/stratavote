@@ -1351,6 +1351,82 @@ app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
   }
 });
 
+// Admin Settings page
+app.get('/admin/settings', requireAuth, (req, res) => {
+  res.render('admin_settings', { 
+    error: null, 
+    success: null,
+    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+  });
+});
+
+// Change Admin Password
+app.post('/admin/settings/password', requireAuth, (req, res) => {
+  const { current_password, new_password, confirm_password } = req.body;
+  
+  // Validate input
+  if (!current_password || !new_password || !confirm_password) {
+    return res.render('admin_settings', {
+      error: 'All fields are required',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+  
+  if (new_password.length < 8) {
+    return res.render('admin_settings', {
+      error: 'New password must be at least 8 characters long',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+  
+  if (new_password !== confirm_password) {
+    return res.render('admin_settings', {
+      error: 'New passwords do not match',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+  
+  // Verify current password
+  if (current_password !== process.env.ADMIN_PASSWORD) {
+    logger.warn('Admin password change failed - incorrect current password', {
+      sessionId: req.session.id,
+      ip: req.ip
+    });
+    return res.render('admin_settings', {
+      error: 'Current password is incorrect',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+  
+  // Check if new password is the same as current
+  if (new_password === process.env.ADMIN_PASSWORD) {
+    return res.render('admin_settings', {
+      error: 'New password must be different from current password',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+  
+  // Note: In a production environment, you would update the password in a secure way
+  // Since this uses environment variables, we can only log the change request
+  // The actual password change would need to be done by updating the environment variable
+  logger.info('Admin password change requested', {
+    sessionId: req.session.id,
+    ip: req.ip,
+    timestamp: new Date().toISOString()
+  });
+  
+  res.render('admin_settings', {
+    error: null,
+    success: 'Password change request logged. Please update the ADMIN_PASSWORD environment variable and restart the application.',
+    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+  });
+});
+
 // Health check endpoints (for Coolify/Docker/monitoring)
 app.get('/health', (req, res) => {
   try {
