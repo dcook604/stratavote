@@ -468,7 +468,15 @@ if (process.env.NODE_ENV === 'production') {
 
 // CSRF protection using COOKIES (not session) to avoid overwriting session cookie
 // cookie: true means CSRF tokens are stored in a separate cookie, not in the session
-const csrfProtection = csrf({ cookie: true });
+const csrfProtection = csrf({
+  cookie: {
+    key: '_csrf',
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: 'lax',
+    path: '/'
+  }
+});
 app.use((req, res, next) => {
   // Skip CSRF for voting endpoints (they use one-time tokens for auth)
   if (req.path.startsWith('/vote/') && req.method === 'POST') {
