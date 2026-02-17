@@ -739,7 +739,7 @@ app.get('/admin/login', (req, res, next) => {
     hasIsAdmin: 'isAdmin' in (req.session || {}),
     isAdmin: req.session?.isAdmin,
     hasCookie: !!req.headers.cookie,
-    willRedirect: hasSessionCookie && req.session && req.session.isAdmin
+    willRedirect: hasSessionCookie && req.session && req.session.isAdmin === true
   });
 
   // Register finish handler BEFORE any early returns (so it fires for redirects too)
@@ -764,7 +764,9 @@ app.get('/admin/login', (req, res, next) => {
   });
 
   // Only check session if client already has a session cookie
-  if (hasSessionCookie && req.session && req.session.isAdmin) {
+  // IMPORTANT: Must use strict === true check, same as requireAuth(),
+  // otherwise truthy values (e.g. string "true" from SQLite) cause a redirect loop
+  if (hasSessionCookie && req.session && req.session.isAdmin === true) {
     logger.info('Already logged in - redirecting to dashboard');
     return res.redirect('/admin/dashboard');
   }
