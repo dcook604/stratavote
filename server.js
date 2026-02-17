@@ -348,7 +348,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false, // FALSE = don't save empty sessions (prevents overwriting valid sessions!)
-  rolling: false, // FALSE = don't reset cookie expiry on every request (only on session modification)
+  rolling: true, // TRUE = reset cookie expiry on every request (extends session with activity)
   name: 'strata.sid',
   proxy: true, // Trust the reverse proxy for secure cookie handling
   cookie: {
@@ -358,7 +358,7 @@ app.use(session({
     secure: IS_PRODUCTION,
     sameSite: 'lax',
     path: '/',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 3 * 60 * 60 * 1000 // 3 hours timeout
   }
 }));
 
@@ -367,7 +367,8 @@ logger.info('Session middleware configured', {
   cookieSecure: IS_PRODUCTION,
   cookieSameSite: 'lax',
   trustProxy: true,
-  rolling: false
+  rolling: true,
+  maxAge: '3 hours'
 });
 
 // Note: No stale session recovery middleware needed.
