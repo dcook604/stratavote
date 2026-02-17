@@ -122,7 +122,17 @@ function initDatabase() {
     const hasIdText = tableInfo.some(col => col.name === 'id' && col.type === 'TEXT');
     const hasMotionRef = tableInfo.some(col => col.name === 'motion_ref');
 
+    // Clean up any failed migration first
+    try {
+      db.exec('DROP TABLE IF EXISTS motions_new');
+    } catch (e) {
+      // Ignore if table doesn't exist
+    }
+
     if (!hasIdText || !hasMotionRef) {
+      const logger = require('./logger');
+      logger.info('Starting migration of motions table to UUID and motion_ref schema');
+
       // Create new motions table with UUID primary key
       db.exec(`
         CREATE TABLE motions_new (
@@ -197,12 +207,12 @@ function initDatabase() {
       db.exec('CREATE INDEX IF NOT EXISTS idx_motions_status ON motions(status)');
       db.exec('CREATE INDEX IF NOT EXISTS idx_motions_created_at ON motions(created_at)');
 
-      const logger = require('./logger');
-      logger.info('Migrated motions table to use UUID primary keys and motion_ref');
+      logger.info('Successfully migrated motions table to use UUID primary keys and motion_ref');
     }
   } catch (err) {
     const logger = require('./logger');
     logger.error('Error migrating motions table:', err);
+    throw err;
   }
 
   // Council Members table
