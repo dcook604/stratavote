@@ -167,9 +167,14 @@ function initDatabase() {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
+      // Generate unique motion refs for migration
+      let refCounter = 1;
+      const year = new Date().getFullYear();
+      
       for (const motion of existingMotions) {
         const uuid = generateUUID();
-        const ref = generateMotionRef();
+        const ref = `M-${year}-${String(refCounter).padStart(6, '0')}`;
+        refCounter++;
         insertNew.run(
           uuid, ref, motion.title, motion.description, motion.options_json,
           motion.open_at, motion.close_at, motion.status, motion.required_majority,
