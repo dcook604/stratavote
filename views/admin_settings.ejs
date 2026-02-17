@@ -50,6 +50,27 @@
     </div>
 
     <div class="card">
+      <h2>Property Manager</h2>
+      <p class="text-muted">Configure the Property Manager recipient for vote completion results emails.</p>
+
+      <form method="POST" action="/admin/settings/property-manager" class="form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+
+        <div class="form-group">
+          <label for="property_manager_name">Property Manager Name</label>
+          <input type="text" id="property_manager_name" name="property_manager_name" value="<%= property_manager_name || '' %>">
+        </div>
+
+        <div class="form-group">
+          <label for="property_manager_email">Property Manager Email *</label>
+          <input type="email" id="property_manager_email" name="property_manager_email" required value="<%= property_manager_email || '' %>">
+        </div>
+
+        <button type="submit" class="btn btn-primary">Update Property Manager</button>
+      </form>
+    </div>
+
+    <div class="card">
       <h2>Email Configuration</h2>
       <p class="text-muted">Test the email configuration for sending voting links.</p>
       
