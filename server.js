@@ -340,59 +340,9 @@ logger.info('Session middleware configured', {
   rolling: false
 });
 
-// HARD GUARD: Never overwrite an existing session cookie
-// If the request already has a strata.sid cookie, prevent sending a new one
-app.use((req, res, next) => {
-  const hasCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
-
-  if (hasCookie) {
-    const originalSetHeader = res.setHeader.bind(res);
-    res.setHeader = function(name, value) {
-      if (name.toLowerCase() === 'set-cookie') {
-        // Filter out strata.sid cookies if client already has one
-        if (Array.isArray(value)) {
-          value = value.filter(cookie => !cookie.startsWith('strata.sid='));
-          if (value.length === 0) {
-            logger.info('GUARD: Blocked attempt to overwrite existing strata.sid cookie', {
-              path: req.path,
-              method: req.method,
-              sessionID: req.sessionID
-            });
-            return; // Don't set header if no cookies left
-          }
-        } else if (typeof value === 'string' && value.startsWith('strata.sid=')) {
-          logger.info('GUARD: Blocked attempt to overwrite existing strata.sid cookie', {
-            path: req.path,
-            method: req.method,
-            sessionID: req.sessionID
-          });
-          return; // Don't set header
-        }
-      }
-      return originalSetHeader(name, value);
-    };
-  }
-
-  next();
-});
-
-// CRITICAL FIX: Override cookie SameSite on every response
-// express-session 1.19.0 seems to ignore sameSite:'lax' and uses 'strict' instead
-app.use((req, res, next) => {
-  const originalSetHeader = res.setHeader.bind(res);
-  res.setHeader = function(name, value) {
-    if (name.toLowerCase() === 'set-cookie') {
-      // Force SameSite=Lax instead of Strict
-      if (typeof value === 'string') {
-        value = value.replace(/SameSite=Strict/gi, 'SameSite=Lax');
-      } else if (Array.isArray(value)) {
-        value = value.map(v => v.replace(/SameSite=Strict/gi, 'SameSite=Lax'));
-      }
-    }
-    return originalSetHeader(name, value);
-  };
-  next();
-});
+// Session cookie handling note:
+// resave: false, rolling: false, saveUninitialized: false in session config
+// already prevent unnecessary cookie overwrites. No monkey-patching needed.
 
 // GLOBAL HTTP LOGGER - Logs ALL requests with session details
 app.use((req, res, next) => {
@@ -530,6 +480,26 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   res.locals.csrfToken = req.csrfToken;
   next();
+});
+
+// CSRF error handler - show friendly message instead of raw 403
+app.use((err, req, res, next) => {
+  if (err.code !== 'EBADCSRFTOKEN') return next(err);
+
+  logger.warn('CSRF token validation failed', {
+    path: req.path,
+    method: req.method,
+    sessionID: req.sessionID
+  });
+
+  // For admin routes, redirect back with error message
+  if (req.path.startsWith('/admin/')) {
+    const referer = req.get('referer');
+    const redirectTo = referer || '/admin/dashboard';
+    return res.redirect(redirectTo);
+  }
+
+  res.status(403).send('Form expired. Please go back and try again.');
 });
 
 // Helper: check isAdmin robustly (SQLite may deserialize true as 1 or "true")
@@ -734,46 +704,10 @@ app.post('/vote/:motionId', voteLimiter, validate(schemas.vote), (req, res) => {
 // ADMIN ROUTES
 
 // Login page
-app.get('/admin/login', (req, res, next) => {
-  // Check if client has session cookie before accessing req.session
-  // This prevents creating a new session when none exists
-  const hasSessionCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
-
-  logger.info('===> ADMIN LOGIN PAGE (GET)', {
-    sessionID: req.sessionID,
-    hasSessionCookie: hasSessionCookie,
-    sessionKeys: Object.keys(req.session || {}),
-    hasIsAdmin: 'isAdmin' in (req.session || {}),
-    isAdmin: req.session?.isAdmin,
-    hasCookie: !!req.headers.cookie,
-    willRedirect: hasSessionCookie && isAdminAuthenticated(req.session)
-  });
-
-  // Register finish handler BEFORE any early returns (so it fires for redirects too)
-  res.on('finish', () => {
-    const setCookie = res.getHeader('set-cookie');
-    const sentSessionCookie = setCookie && (
-      Array.isArray(setCookie)
-        ? setCookie.some(c => c.startsWith('strata.sid='))
-        : setCookie.startsWith('strata.sid=')
-    );
-
-    if (sentSessionCookie) {
-      logger.error('🚨 GUARD FAILED: GET /admin/login sent Set-Cookie for strata.sid despite guard!', {
-        hadExistingCookie: hasSessionCookie,
-        sessionID: req.sessionID
-      });
-    } else if (hasSessionCookie) {
-      logger.info('✅ GET /admin/login preserved existing session (no Set-Cookie sent)');
-    } else {
-      logger.info('✅ GET /admin/login: No session cookie (expected for first visit)');
-    }
-  });
-
-  // Only check session if client already has a session cookie
-  // Uses isAdminAuthenticated() to handle SQLite deserializing true as 1 or "true"
-  if (hasSessionCookie && isAdminAuthenticated(req.session)) {
-    logger.info('Already logged in - redirecting to dashboard');
+app.get('/admin/login', (req, res) => {
+  // If already authenticated, redirect to dashboard
+  if (isAdminAuthenticated(req.session)) {
+    logger.info('Already logged in - redirecting to dashboard', { sessionID: req.sessionID });
     return res.redirect('/admin/dashboard');
   }
 
