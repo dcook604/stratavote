@@ -307,13 +307,29 @@ const sessionsDb = new Database(sessionsDbPath);
 sessionsDb.pragma('journal_mode = WAL');
 
 // Create sessions table with the schema expected by better-sqlite3-session-store
-sessionsDb.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    sid TEXT PRIMARY KEY,
-    sess TEXT NOT NULL,
-    expire INTEGER NOT NULL
-  )
-`);
+// First check if table exists and has the correct schema
+let hasExpireColumn = false;
+try {
+  const tableInfo = sessionsDb.prepare("PRAGMA table_info(sessions)").all();
+  hasExpireColumn = tableInfo.some(col => col.name === 'expire');
+} catch (e) {
+  // Table doesn't exist yet
+}
+
+if (!hasExpireColumn) {
+  // Drop old table if it exists and create new one with correct schema
+  sessionsDb.exec("DROP TABLE IF EXISTS sessions");
+  sessionsDb.exec(`
+    CREATE TABLE sessions (
+      sid TEXT PRIMARY KEY,
+      sess TEXT NOT NULL,
+      expire INTEGER NOT NULL
+    )
+  `);
+  logger.info('Created new sessions table with correct schema');
+} else {
+  logger.info('Sessions table already has correct schema');
+}
 
 logger.info('Sessions DB opened and initialized', { path: sessionsDbPath });
 
