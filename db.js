@@ -16,6 +16,20 @@ if (fs.existsSync(persistentDir)) {
   dbPath = path.join(__dirname, 'data.sqlite');
 }
 
+// Hash password using bcrypt-like approach with scrypt
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+// Verify password
+function verifyPassword(password, hashedPassword) {
+  const [salt, hash] = hashedPassword.split(':');
+  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return hash === verifyHash;
+}
+
 const db = new Database(dbPath);
 
 // Generate UUID v4
@@ -253,6 +267,29 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_council_members_unit ON council_members(unit_number);
   `);
 
+  // Admin settings table for password storage
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      password_hash TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT NULL
+    );
+  `);
+
+  // Initialize admin password if not exists
+  const adminSettings = db.prepare('SELECT * FROM admin_settings WHERE id = 1').get();
+  if (!adminSettings && process.env.ADMIN_PASSWORD) {
+    const hashedPassword = hashPassword(process.env.ADMIN_PASSWORD);
+    db.prepare(`
+      INSERT INTO admin_settings (id, password_hash, updated_at, updated_by)
+      VALUES (1, ?, ?, 'system')
+    `).run(hashedPassword, new Date().toISOString());
+    
+    const logger = require('./logger');
+    logger.info('Initialized admin password from environment variable');
+  }
+
   // Performance index for dashboard date filtering
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_motions_close_at ON motions(close_at);
@@ -358,6 +395,17 @@ const councilQueries = {
   findByEmail: db.prepare('SELECT * FROM council_members WHERE email = ?')
 };
 
+// Prepared statements for admin settings
+const adminQueries = {
+  getPassword: db.prepare('SELECT password_hash FROM admin_settings WHERE id = 1'),
+  
+  updatePassword: db.prepare(`
+    UPDATE admin_settings 
+    SET password_hash = ?, updated_at = ?, updated_by = ?
+    WHERE id = 1
+  `)
+};
+
 // Transaction wrapper for vote submission
 function submitVote(motionId, tokenId, choice, userAgent, ipHash) {
   try {
@@ -397,14 +445,39 @@ function getMotionStats(motionId) {
   };
 }
 
+// Helper function to verify admin password
+function verifyAdminPassword(password) {
+  const admin = adminQueries.getPassword.get();
+  if (!admin) {
+    // Fallback to environment variable if no password in database
+    return password === process.env.ADMIN_PASSWORD;
+  }
+  return verifyPassword(password, admin.password_hash);
+}
+
+// Helper function to update admin password
+function updateAdminPassword(newPassword, updatedBy) {
+  const hashedPassword = hashPassword(newPassword);
+  return adminQueries.updatePassword.run(
+    hashedPassword,
+    new Date().toISOString(),
+    updatedBy
+  );
+}
+
 module.exports = {
   db,
   motionQueries,
   tokenQueries,
   ballotQueries,
   councilQueries,
+  adminQueries,
   submitVote,
   getMotionStats,
   generateUUID,
-  generateMotionRef
+  generateMotionRef,
+  hashPassword,
+  verifyPassword,
+  verifyAdminPassword,
+  updateAdminPassword
 };
