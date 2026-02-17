@@ -906,6 +906,24 @@ app.post('/admin/motions/:id/status', requireAuth, (req, res) => {
 
   try {
     motionQueries.updateStatus.run(status, id);
+
+    if (status === 'Closed' || status === 'Published') {
+      const motion = motionQueries.getById.get(id);
+      const queuedChanges = ensureResultsEmailNotification(id);
+      logger.info('notification queued', {
+        motionId: id,
+        motionRef: motion ? motion.motion_ref : null,
+        inserted: queuedChanges > 0,
+        trigger: 'manual_status_change',
+        status
+      });
+
+      // Best-effort: process immediately so admins see it happen without waiting for the 1-min tick
+      processPendingResultsEmails({ baseUrl: BASE_URL, limit: 25 }).catch(err => {
+        logger.error('immediate results email processing failed', { motionId: id, error: err.message });
+      });
+    }
+
     res.redirect(`/admin/motions/${id}?success=Status+updated`);
   } catch (err) {
     logger.error('Status update error:', err);

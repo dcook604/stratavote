@@ -137,6 +137,10 @@ async function processPendingResultsEmails({ baseUrl, limit = 25 } = {}) {
   const nowIso = new Date().toISOString();
   const pending = getPendingNotifications(nowIso, limit);
 
+  if (pending.length > 0) {
+    logger.info('processing pending results emails', { count: pending.length });
+  }
+
   for (const notif of pending) {
     try {
       const result = await sendResultsEmailForMotion({

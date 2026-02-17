@@ -756,7 +756,8 @@ function setSetting(key, value) {
 }
 
 function ensureResultsEmailNotification(motionId) {
-  return motionNotificationQueries.ensurePending.run(generateUUID(), motionId, new Date().toISOString());
+  const result = motionNotificationQueries.ensurePending.run(generateUUID(), motionId, new Date().toISOString());
+  return result && typeof result.changes === 'number' ? result.changes : 0;
 }
 
 function getPendingNotifications(nowIso, limit) {
