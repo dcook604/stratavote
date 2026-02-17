@@ -340,39 +340,10 @@ logger.info('Session middleware configured', {
   rolling: false
 });
 
-// Stale session recovery: if browser sends a strata.sid cookie but the session
-// store can't find it (e.g. after redeploy wiped sessions DB), the session object
-// will be new/empty. Regenerate and explicitly save so the new session exists in
-// the store when the browser sends the new cookie back.
-app.use((req, res, next) => {
-  const hasCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
-  const isNewSession = req.session && !req.session.isAdmin && req.sessionID;
-
-  // If browser sent a session cookie but session has no data, it's stale
-  if (hasCookie && isNewSession && Object.keys(req.session).length <= 1) {
-    // Only the 'cookie' key exists — session data was lost
-    return req.session.regenerate((err) => {
-      if (err) {
-        logger.error('Session regeneration error', { error: err.message });
-        return next(err);
-      }
-      // Mark session so it's no longer "uninitialized" and will be saved
-      req.session._regenerated = true;
-      req.session.save((saveErr) => {
-        if (saveErr) {
-          logger.error('Session save after regeneration error', { error: saveErr.message });
-          return next(saveErr);
-        }
-        logger.info('Stale session detected, regenerated and saved', {
-          newSessionID: req.sessionID,
-          path: req.path
-        });
-        next();
-      });
-    });
-  }
-  next();
-});
+// Note: No stale session recovery middleware needed.
+// express-session handles stale cookies gracefully: if the store can't find
+// the session, it creates a new empty one. On login, session.save() persists
+// it and sends a fresh cookie to the browser.
 
 // GLOBAL HTTP LOGGER - Logs ALL requests with session details
 app.use((req, res, next) => {
@@ -504,6 +475,10 @@ app.use((req, res, next) => {
   if (req.path.match(/^\/vote\/\d+$/) && req.method === 'GET') {
     return next();
   }
+  // Skip CSRF for login POST (password-only form, no CSRF attack vector)
+  if (req.path === '/admin/login' && req.method === 'POST') {
+    return next();
+  }
   csrfProtection(req, res, next);
 });
 
@@ -539,34 +514,13 @@ function isAdminAuthenticated(session) {
 
 // Auth middleware
 function requireAuth(req, res, next) {
-  const hasIsAdmin = 'isAdmin' in (req.session || {});
-  const isAdminValue = req.session?.isAdmin;
-  const isAdminTruthy = !!isAdminValue;
-  const isAuthenticated = isAdminAuthenticated(req.session);
-
-  logger.info('===> AUTH CHECK', {
-    path: req.path,
-    sessionID: req.sessionID,
-    sessionKeys: Object.keys(req.session || {}),
-    hasIsAdmin: hasIsAdmin,
-    isAdmin: isAdminValue,
-    isAdminType: typeof isAdminValue,
-    isAdminTruthy: isAdminTruthy,
-    isAuthenticated: isAuthenticated,
-    willAllow: isAuthenticated
-  });
-
-  if (isAuthenticated) {
-    logger.info('AUTH PASSED - Access granted');
+  if (isAdminAuthenticated(req.session)) {
     return next();
   }
 
-  logger.warn('AUTH FAILED - Redirecting to login', {
+  logger.warn('Auth failed - redirecting to login', {
     path: req.path,
-    sessionID: req.sessionID,
-    reason: hasIsAdmin
-      ? `isAdmin exists but is ${isAdminValue} (${typeof isAdminValue})`
-      : 'isAdmin not in session'
+    sessionID: req.sessionID
   });
 
   res.redirect('/admin/login');
@@ -747,71 +701,20 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next)
   const { password } = req.body;
   const passwordValid = password === process.env.ADMIN_PASSWORD;
 
-  logger.info('===> ADMIN LOGIN POST', {
-    sessionID: req.sessionID,
-    passwordValid: passwordValid,
-    sessionKeys_BEFORE: Object.keys(req.session || {}),
-    hasIsAdmin_BEFORE: 'isAdmin' in (req.session || {}),
-    protocol: req.protocol,
-    secure: req.secure,
-    forwardedProto: req.get('x-forwarded-proto')
-  });
-
   if (!passwordValid) {
-    logger.warn('LOGIN FAILED - Invalid password', { sessionID: req.sessionID });
+    logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
     return res.render('admin_login', { error: 'Invalid password.' });
   }
 
-  // Password is valid - set isAdmin on EXISTING session
-  // DO NOT regenerate - it causes browser to reject/ignore the new cookie
-  const sessionIDBeforeSet = req.sessionID;
-
-  logger.info('SETTING ADMIN FLAGS (no regenerate)', {
-    sessionID: sessionIDBeforeSet,
-    sessionKeys_BEFORE: Object.keys(req.session || {})
-  });
-
-  // Set admin flags on EXISTING session
+  // Set admin flag and save session
   req.session.isAdmin = true;
-
-  logger.info('ADMIN FLAGS SET', {
-    sessionID: req.sessionID,
-    sessionIDChanged: req.sessionID !== sessionIDBeforeSet,
-    sessionKeys_AFTER_SET: Object.keys(req.session || {}),
-    isAdmin: req.session.isAdmin,
-    hasIsAdmin: 'isAdmin' in req.session
-  });
-
-  // Save session to SQLite store
-  req.session.save((err2) => {
-    if (err2) {
-      logger.error('SESSION SAVE ERROR', {
-        error: err2.message,
-        stack: err2.stack,
-        sessionID: req.sessionID
-      });
-      return next(err2);
+  req.session.save((err) => {
+    if (err) {
+      logger.error('Session save error on login', { error: err.message, sessionID: req.sessionID });
+      return next(err);
     }
 
-    logger.info('SESSION SAVED TO SQLITE', {
-      sessionID: req.sessionID,
-      sessionIDStillSame: req.sessionID === sessionIDBeforeSet,
-      sessionKeys_AFTER_SAVE: Object.keys(req.session || {}),
-      isAdmin: req.session.isAdmin,
-      isAdminValue: String(req.session.isAdmin),
-      isAdminType: typeof req.session.isAdmin,
-      cookieSecure: req.session.cookie.secure,
-      willRedirectTo: '/admin/dashboard'
-    });
-
-    // Server-side 302 redirect now works correctly with session fixes
-    // (rolling:false, saveUninitialized:false, hard guard prevent cookie overwrites)
-    logger.info('LOGIN SUCCESS - Redirecting to dashboard', {
-      from: req.originalUrl,
-      to: '/admin/dashboard',
-      method: '302'
-    });
-
+    logger.info('Login success', { sessionID: req.sessionID });
     return res.redirect('/admin/dashboard');
   });
 });
@@ -823,26 +726,7 @@ app.post('/admin/logout', (req, res) => {
 });
 
 // Dashboard
-app.get('/admin/dashboard', (req, res, next) => {
-  // Log BEFORE auth check to see if request even arrives
-  logger.info('===> DASHBOARD REQUEST RECEIVED (before auth)', {
-    sessionID: req.sessionID,
-    sessionKeys: Object.keys(req.session || {}),
-    isAdmin: req.session?.isAdmin,
-    hasIsAdmin: 'isAdmin' in (req.session || {}),
-    cookieHeader: req.headers.cookie ? 'present' : 'missing'
-  });
-
-  // Now run auth
-  requireAuth(req, res, () => {
-    logger.info('===> DASHBOARD LOADED (after auth passed)', {
-      sessionID: req.sessionID,
-      sessionKeys: Object.keys(req.session || {}),
-      isAdmin: req.session?.isAdmin
-    });
-    next();
-  });
-}, (req, res) => {
+app.get('/admin/dashboard', requireAuth, (req, res) => {
   const { start_date, end_date } = req.query;
 
   let motions;
