@@ -922,34 +922,28 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   try {
     logger.info('Attempting to delete motion', { motionId: id, title: motion.title });
     
-    // Temporarily disable foreign key constraints for deletion
+    // Disable foreign key constraints for this operation
     db.pragma('foreign_keys = OFF');
     
-    try {
-      // Check if motion has any voter tokens
-      const tokens = tokenQueries.getByMotion.all(id);
-      logger.info('Motion has tokens', { motionId: id, tokenCount: tokens.length });
-      
-      // Delete in transaction to maintain referential integrity
-      const transaction = db.transaction(() => {
-        // Delete voter tokens first (foreign key constraint)
-        logger.info('Deleting voter tokens for motion', { motionId: id });
-        const deleteResult = tokenQueries.deleteByMotion.run(id);
-        logger.info('Voter tokens deleted', { motionId: id, deletedCount: deleteResult.changes });
-        
-        // Delete the motion
-        logger.info('Deleting motion', { motionId: id });
-        const motionResult = motionQueries.delete.run(id);
-        logger.info('Motion deleted', { motionId: id, deletedCount: motionResult.changes });
-      });
-      
-      transaction();
-      logger.info('Motion deletion transaction completed successfully', { motionId: id, title: motion.title });
-    } finally {
-      // Always re-enable foreign keys
-      db.pragma('foreign_keys = ON');
-    }
+    // Delete voter tokens first using raw SQL to avoid prepared statement issues
+    logger.info('Deleting voter tokens for motion', { motionId: id });
+    const tokenDeleteResult = db.prepare('DELETE FROM voter_tokens WHERE motion_id = ?').run(id);
+    logger.info('Voter tokens deleted', { motionId: id, deletedCount: tokenDeleteResult.changes });
     
+    // Delete any ballots associated with the motion
+    logger.info('Deleting ballots for motion', { motionId: id });
+    const ballotDeleteResult = db.prepare('DELETE FROM ballots WHERE motion_id = ?').run(id);
+    logger.info('Ballots deleted', { motionId: id, deletedCount: ballotDeleteResult.changes });
+    
+    // Delete the motion
+    logger.info('Deleting motion', { motionId: id });
+    const motionDeleteResult = db.prepare('DELETE FROM motions WHERE id = ?').run(id);
+    logger.info('Motion deleted', { motionId: id, deletedCount: motionDeleteResult.changes });
+    
+    // Re-enable foreign keys
+    db.pragma('foreign_keys = ON');
+    
+    logger.info('Motion deletion completed successfully', { motionId: id, title: motion.title });
     res.redirect('/admin/dashboard?success=Motion+deleted+successfully');
   } catch (err) {
     // Ensure foreign keys are re-enabled even on error
