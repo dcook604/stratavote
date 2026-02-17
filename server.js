@@ -305,7 +305,17 @@ logger.info('Session store configuration', {
 const sessionsDbPath = path.join(sessionDir, 'sessions.db');
 const sessionsDb = new Database(sessionsDbPath);
 sessionsDb.pragma('journal_mode = WAL');
-logger.info('Sessions DB opened', { path: sessionsDbPath });
+
+// Create sessions table with the schema expected by better-sqlite3-session-store
+sessionsDb.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid TEXT PRIMARY KEY,
+    sess TEXT NOT NULL,
+    expire INTEGER NOT NULL
+  )
+`);
+
+logger.info('Sessions DB opened and initialized', { path: sessionsDbPath });
 
 const sqliteStore = new SqliteStore({
   client: sessionsDb,
