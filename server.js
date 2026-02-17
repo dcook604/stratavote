@@ -342,7 +342,8 @@ logger.info('Session middleware configured', {
 
 // Stale session recovery: if browser sends a strata.sid cookie but the session
 // store can't find it (e.g. after redeploy wiped sessions DB), the session object
-// will be new/empty. Regenerate so the browser gets a fresh valid cookie.
+// will be new/empty. Regenerate and explicitly save so the new session exists in
+// the store when the browser sends the new cookie back.
 app.use((req, res, next) => {
   const hasCookie = req.headers.cookie && req.headers.cookie.includes('strata.sid=');
   const isNewSession = req.session && !req.session.isAdmin && req.sessionID;
@@ -355,11 +356,19 @@ app.use((req, res, next) => {
         logger.error('Session regeneration error', { error: err.message });
         return next(err);
       }
-      logger.info('Stale session detected and regenerated', {
-        newSessionID: req.sessionID,
-        path: req.path
+      // Mark session so it's no longer "uninitialized" and will be saved
+      req.session._regenerated = true;
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          logger.error('Session save after regeneration error', { error: saveErr.message });
+          return next(saveErr);
+        }
+        logger.info('Stale session detected, regenerated and saved', {
+          newSessionID: req.sessionID,
+          path: req.path
+        });
+        next();
       });
-      next();
     });
   }
   next();
