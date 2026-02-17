@@ -139,6 +139,9 @@ function initDatabase() {
       const logger = require('./logger');
       logger.info('Starting migration of motions table to UUID and motion_ref schema');
 
+      // Disable foreign key constraints during migration
+      db.pragma('foreign_keys = OFF');
+
       // Create new motions table with UUID primary key
       db.exec(`
         CREATE TABLE motions_new (
@@ -218,11 +221,20 @@ function initDatabase() {
       db.exec('CREATE INDEX IF NOT EXISTS idx_motions_status ON motions(status)');
       db.exec('CREATE INDEX IF NOT EXISTS idx_motions_created_at ON motions(created_at)');
 
+      // Re-enable foreign key constraints
+      db.pragma('foreign_keys = ON');
+
       logger.info('Successfully migrated motions table to use UUID primary keys and motion_ref');
     }
   } catch (err) {
     const logger = require('./logger');
     logger.error('Error migrating motions table:', err);
+    // Ensure foreign keys are re-enabled even on error
+    try {
+      db.pragma('foreign_keys = ON');
+    } catch (e) {
+      // Ignore
+    }
     throw err;
   }
 
