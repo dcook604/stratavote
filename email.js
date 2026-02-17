@@ -3,10 +3,11 @@ const logger = require('./logger');
 
 // Check if email is configured
 function isEmailConfigured() {
+  const password = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
   return !!(
     process.env.SMTP_HOST &&
     process.env.SMTP_USER &&
-    process.env.SMTP_PASSWORD
+    password
   );
 }
 
@@ -47,6 +48,8 @@ function getTransporter() {
     return null;
   }
 
+  const password = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
+
   if (!transporter) {
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
@@ -54,7 +57,7 @@ function getTransporter() {
       secure: process.env.SMTP_SECURE === 'true',
       auth: {
         user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD
+        pass: password
       }
     });
   }

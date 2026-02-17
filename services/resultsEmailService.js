@@ -130,6 +130,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
 
 async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn }) {
   if (!isResultsEmailsEnabled()) {
+    logger.warn('results email skipped: RESULTS_EMAILS_ENABLED not true', { motionId });
     return { sent: false, skipped: true, reason: 'results_emails_disabled' };
   }
 
@@ -149,6 +150,7 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn }) {
 
   const recipients = uniqEmails([...participantEmails, propertyManagerEmail]);
   if (recipients.length === 0) {
+    logger.warn('results email skipped: no recipients', { motionId, motionRef: motion.motion_ref });
     return { sent: false, skipped: true, reason: 'no_recipients' };
   }
 
