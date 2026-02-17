@@ -19,7 +19,9 @@ const {
   ballotQueries,
   councilQueries,
   submitVote,
-  getMotionStats
+  getMotionStats,
+  generateUUID,
+  generateMotionRef
 } = require('./db');
 const { isEmailConfigured, sendVotingLink } = require('./email');
 
@@ -816,7 +818,12 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
   const created_at = new Date().toISOString();
 
   try {
-    const result = motionQueries.create.run(
+    const motionId = generateUUID();
+    const motionRef = generateMotionRef();
+    
+    motionQueries.create.run(
+      motionId,
+      motionRef,
       title,
       description,
       optionsJson,
@@ -827,7 +834,7 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
       created_at
     );
 
-    res.redirect(`/admin/motions/${result.lastInsertRowid}`);
+    res.redirect(`/admin/motions/${motionId}`);
   } catch (err) {
     logger.error('Motion creation error:', err);
     res.render('motion_new', {

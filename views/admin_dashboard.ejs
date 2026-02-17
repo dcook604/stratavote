@@ -77,6 +77,9 @@
               <h3>
                 <a href="/admin/motions/<%= motion.id %>"><%= motion.title %></a>
               </h3>
+              <div class="motion-ref">
+                <small class="text-muted"><%= motion.motion_ref %></small>
+              </div>
               <span class="badge badge-<%= motion.status.toLowerCase() %>"><%= motion.status %></span>
             </div>
 

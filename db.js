@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // Use persistent directory for database if it exists (Coolify volume mount)
 // Otherwise fall back to /app for development
@@ -16,6 +17,27 @@ if (fs.existsSync(persistentDir)) {
 }
 
 const db = new Database(dbPath);
+
+// Generate UUID v4
+function generateUUID() {
+  return crypto.randomUUID();
+}
+
+// Generate motion reference (M-YYYY-NNNNNN)
+function generateMotionRef() {
+  const year = new Date().getFullYear();
+  // Get the highest sequence number for this year
+  const result = db.prepare(`
+    SELECT CAST(SUBSTR(motion_ref, 8) AS INTEGER) as seq 
+    FROM motions 
+    WHERE motion_ref LIKE 'M-${year}-%'
+    ORDER BY seq DESC 
+    LIMIT 1
+  `).get();
+  
+  const nextSeq = (result?.seq || 0) + 1;
+  return `M-${year}-${String(nextSeq).padStart(6, '0')}`;
+}
 
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
@@ -94,6 +116,95 @@ function initDatabase() {
     // Columns might already exist, ignore error
   }
 
+  // Migration: Update motions table to use UUID and motion_ref
+  try {
+    const tableInfo = db.pragma('table_info(motions)');
+    const hasIdText = tableInfo.some(col => col.name === 'id' && col.type === 'TEXT');
+    const hasMotionRef = tableInfo.some(col => col.name === 'motion_ref');
+
+    if (!hasIdText || !hasMotionRef) {
+      // Create new motions table with UUID primary key
+      db.exec(`
+        CREATE TABLE motions_new (
+          id TEXT PRIMARY KEY,
+          motion_ref TEXT UNIQUE NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          options_json TEXT NOT NULL,
+          open_at TEXT NOT NULL,
+          close_at TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('Draft', 'Open', 'Closed', 'Published')),
+          required_majority TEXT NOT NULL CHECK(required_majority IN ('Simple', 'TwoThirds')),
+          outcome TEXT NULL CHECK(outcome IS NULL OR outcome IN ('Passed', 'Failed', 'Tie', 'Cancelled')),
+          outcome_notes TEXT NULL,
+          created_at TEXT NOT NULL
+        )
+      `);
+
+      // Migrate existing data
+      const existingMotions = db.prepare('SELECT * FROM motions').all();
+      const insertNew = db.prepare(`
+        INSERT INTO motions_new (
+          id, motion_ref, title, description, options_json, 
+          open_at, close_at, status, required_majority, 
+          outcome, outcome_notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const motion of existingMotions) {
+        const uuid = generateUUID();
+        const ref = generateMotionRef();
+        insertNew.run(
+          uuid, ref, motion.title, motion.description, motion.options_json,
+          motion.open_at, motion.close_at, motion.status, motion.required_majority,
+          motion.outcome, motion.outcome_notes, motion.created_at
+        );
+      }
+
+      // Update foreign key references in other tables
+      if (existingMotions.length > 0) {
+        const oldToNewMap = {};
+        const oldMotions = db.prepare('SELECT * FROM motions').all();
+        const newMotions = db.prepare('SELECT * FROM motions_new').all();
+        
+        // Map old IDs to new UUIDs based on title and created_at
+        for (let i = 0; i < oldMotions.length; i++) {
+          const old = oldMotions[i];
+          const newMotion = newMotions.find(m => 
+            m.title === old.title && m.created_at === old.created_at
+          );
+          if (newMotion) {
+            oldToNewMap[old.id] = newMotion.id;
+          }
+        }
+
+        // Update voter_tokens
+        for (const [oldId, newId] of Object.entries(oldToNewMap)) {
+          db.prepare('UPDATE voter_tokens SET motion_id = ? WHERE motion_id = ?').run(newId, oldId);
+        }
+
+        // Update ballots
+        for (const [oldId, newId] of Object.entries(oldToNewMap)) {
+          db.prepare('UPDATE ballots SET motion_id = ? WHERE motion_id = ?').run(newId, oldId);
+        }
+      }
+
+      // Drop old table and rename new one
+      db.exec('DROP TABLE motions');
+      db.exec('ALTER TABLE motions_new RENAME TO motions');
+
+      // Recreate indexes
+      db.exec('CREATE INDEX IF NOT EXISTS idx_motions_status ON motions(status)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_motions_created_at ON motions(created_at)');
+
+      const logger = require('./logger');
+      logger.info('Migrated motions table to use UUID primary keys and motion_ref');
+    }
+  } catch (err) {
+    const logger = require('./logger');
+    logger.error('Error migrating motions table:', err);
+  }
+
   // Council Members table
   db.exec(`
     CREATE TABLE IF NOT EXISTS council_members (
@@ -124,11 +235,13 @@ initDatabase();
 // Prepared statements for motions
 const motionQueries = {
   create: db.prepare(`
-    INSERT INTO motions (title, description, options_json, open_at, close_at, status, required_majority, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO motions (id, motion_ref, title, description, options_json, open_at, close_at, status, required_majority, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
 
   getById: db.prepare('SELECT * FROM motions WHERE id = ?'),
+
+  getByRef: db.prepare('SELECT * FROM motions WHERE motion_ref = ?'),
 
   getAll: db.prepare('SELECT * FROM motions ORDER BY created_at DESC'),
 
@@ -258,5 +371,7 @@ module.exports = {
   ballotQueries,
   councilQueries,
   submitVote,
-  getMotionStats
+  getMotionStats,
+  generateUUID,
+  generateMotionRef
 };
