@@ -5,6 +5,7 @@ const SQLiteStore = require('connect-sqlite3')(session);
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const cookieParser = require('cookie-parser');
 const csrf = require('csurf');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -404,6 +405,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Cookie parser (required for cookie-based CSRF tokens)
+app.use(cookieParser());
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: {
@@ -462,8 +466,9 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// CSRF protection (skip for public voting endpoints)
-const csrfProtection = csrf({ cookie: false });
+// CSRF protection using COOKIES (not session) to avoid overwriting session cookie
+// cookie: true means CSRF tokens are stored in a separate cookie, not in the session
+const csrfProtection = csrf({ cookie: true });
 app.use((req, res, next) => {
   // Skip CSRF for voting endpoints (they use one-time tokens for auth)
   if (req.path.startsWith('/vote/') && req.method === 'POST') {
@@ -690,16 +695,23 @@ app.get('/admin/login', (req, res, next) => {
     return res.redirect('/admin/dashboard');
   }
 
-  // Log if we're about to send Set-Cookie (should NOT happen if cookie already exists!)
+  // Log if we're about to send Set-Cookie for strata.sid (should NOT happen if cookie already exists!)
   res.on('finish', () => {
     const setCookie = res.getHeader('set-cookie');
-    if (setCookie) {
-      logger.warn('⚠️  GET /admin/login sent Set-Cookie (this overwrites existing session!)', {
+    // Check specifically for strata.sid session cookie (ignore CSRF cookie)
+    const hasSessionCookie = setCookie && (
+      Array.isArray(setCookie)
+        ? setCookie.some(c => c.startsWith('strata.sid='))
+        : setCookie.startsWith('strata.sid=')
+    );
+
+    if (hasSessionCookie) {
+      logger.warn('⚠️  GET /admin/login sent Set-Cookie for strata.sid (this overwrites existing session!)', {
         hadCookie: !!req.headers.cookie,
         sessionID: req.sessionID
       });
     } else {
-      logger.info('✅ GET /admin/login did NOT send Set-Cookie (existing session preserved)');
+      logger.info('✅ GET /admin/login did NOT send Set-Cookie for strata.sid (existing session preserved)');
     }
   });
 
