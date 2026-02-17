@@ -27,13 +27,19 @@ function generateUUID() {
 function generateMotionRef() {
   const year = new Date().getFullYear();
   // Get the highest sequence number for this year
-  const result = db.prepare(`
-    SELECT CAST(SUBSTR(motion_ref, 8) AS INTEGER) as seq 
-    FROM motions 
-    WHERE motion_ref LIKE 'M-${year}-%'
-    ORDER BY seq DESC 
-    LIMIT 1
-  `).get();
+  let result;
+  try {
+    result = db.prepare(`
+      SELECT CAST(SUBSTR(motion_ref, 8) AS INTEGER) as seq 
+      FROM motions 
+      WHERE motion_ref LIKE 'M-${year}-%'
+      ORDER BY seq DESC 
+      LIMIT 1
+    `).get();
+  } catch (e) {
+    // Table might not have motion_ref column yet (during migration)
+    result = null;
+  }
   
   const nextSeq = (result?.seq || 0) + 1;
   return `M-${year}-${String(nextSeq).padStart(6, '0')}`;
