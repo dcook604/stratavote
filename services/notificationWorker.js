@@ -15,6 +15,34 @@ function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60 * 1000);
 }
 
+function parseMotionDateTime(value) {
+  if (!value) return new Date(NaN);
+  if (typeof value !== 'string') return new Date(value);
+
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = m[6] ? Number(m[6]) : 0;
+
+    const offsetMinutesRaw = process.env.APP_TIMEZONE_OFFSET_MINUTES;
+    if (offsetMinutesRaw !== undefined && offsetMinutesRaw !== null && String(offsetMinutesRaw).trim() !== '') {
+      const offsetMinutes = Number(offsetMinutesRaw);
+      if (!Number.isNaN(offsetMinutes)) {
+        const utcMs = Date.UTC(year, month - 1, day, hour, minute, second) - (offsetMinutes * 60 * 1000);
+        return new Date(utcMs);
+      }
+    }
+
+    return new Date(value);
+  }
+
+  return new Date(value);
+}
+
 function computeBackoffMinutes(attempts) {
   if (attempts <= 0) return 1;
   if (attempts === 1) return 1;
@@ -74,7 +102,7 @@ function closeMotionIfEligible(motion, now) {
 
   if (motion.status !== 'Open') return { changed: false };
 
-  const closeAt = new Date(motion.close_at);
+  const closeAt = parseMotionDateTime(motion.close_at);
   const stats = getMotionStats(motion.id);
 
   const closeByTime = now >= closeAt;

@@ -586,11 +586,44 @@ function hashIP(ip) {
     .digest('hex');
 }
 
+function parseMotionDateTime(value) {
+  if (!value) return new Date(NaN);
+  if (typeof value !== 'string') return new Date(value);
+
+  // Handle values from <input type="datetime-local"> which are typically like "YYYY-MM-DDTHH:mm"
+  // and therefore have no explicit timezone.
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = m[6] ? Number(m[6]) : 0;
+
+    // If APP_TIMEZONE_OFFSET_MINUTES is set (e.g. -480 for PST), interpret the input as that local
+    // time and convert to a UTC Date.
+    const offsetMinutesRaw = process.env.APP_TIMEZONE_OFFSET_MINUTES;
+    if (offsetMinutesRaw !== undefined && offsetMinutesRaw !== null && String(offsetMinutesRaw).trim() !== '') {
+      const offsetMinutes = Number(offsetMinutesRaw);
+      if (!Number.isNaN(offsetMinutes)) {
+        const utcMs = Date.UTC(year, month - 1, day, hour, minute, second) - (offsetMinutes * 60 * 1000);
+        return new Date(utcMs);
+      }
+    }
+
+    // Fallback: let JS interpret it in the server's local timezone.
+    return new Date(value);
+  }
+
+  return new Date(value);
+}
+
 // Helper: validate vote eligibility
 function validateVoteEligibility(motion, token) {
   const now = new Date();
-  const openAt = new Date(motion.open_at);
-  const closeAt = new Date(motion.close_at);
+  const openAt = parseMotionDateTime(motion.open_at);
+  const closeAt = parseMotionDateTime(motion.close_at);
 
   if (!token) {
     return { valid: false, message: 'Invalid voting link.' };
@@ -617,11 +650,17 @@ function validateVoteEligibility(motion, token) {
   }
 
   if (now < openAt) {
-    return { valid: false, message: 'Voting has not yet opened.' };
+    return {
+      valid: false,
+      message: `Voting has not yet opened. (Opens at: ${openAt.toISOString()}, server time: ${now.toISOString()})`
+    };
   }
 
   if (now > closeAt) {
-    return { valid: false, message: 'Voting has closed.' };
+    return {
+      valid: false,
+      message: `Voting has closed. (Closed at: ${closeAt.toISOString()}, server time: ${now.toISOString()})`
+    };
   }
 
   return { valid: true };
@@ -846,6 +885,10 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
   const majority = required_majority || 'Simple';
   const created_at = new Date().toISOString();
 
+  // Normalize motion times to ISO (UTC) so comparisons are consistent across server restarts.
+  const normalizedOpenAt = parseMotionDateTime(open_at).toISOString();
+  const normalizedCloseAt = parseMotionDateTime(close_at).toISOString();
+
   try {
     const motionId = generateUUID();
     const motionRef = generateMotionRef();
@@ -856,8 +899,8 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
       title,
       description,
       optionsJson,
-      open_at,
-      close_at,
+      normalizedOpenAt,
+      normalizedCloseAt,
       'Draft',
       majority,
       created_at
