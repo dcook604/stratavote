@@ -18,10 +18,13 @@ const {
   tokenQueries,
   ballotQueries,
   councilQueries,
+  adminQueries,
   submitVote,
   getMotionStats,
   generateUUID,
-  generateMotionRef
+  generateMotionRef,
+  verifyAdminPassword,
+  updateAdminPassword
 } = require('./db');
 const { isEmailConfigured, sendVotingLink } = require('./email');
 
@@ -730,7 +733,7 @@ app.get('/admin/login', (req, res) => {
 // Login handler
 app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next) => {
   const { password } = req.body;
-  const passwordValid = password === process.env.ADMIN_PASSWORD;
+  const passwordValid = verifyAdminPassword(password);
 
   if (!passwordValid) {
     logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
@@ -902,7 +905,7 @@ app.post('/admin/motions/:id/outcome', requireAuth, (req, res) => {
   }
 });
 
-// Delete motion (Draft or Open with no votes)
+// Delete motion (Draft or Open)
 app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   const { id } = req.params;
   
@@ -912,9 +915,8 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   }
   
   // Check if motion can be deleted
-  const stats = getMotionStats(id);
-  if (motion.status !== 'Draft' && !(motion.status === 'Open' && stats.voted === 0)) {
-    return res.redirect(`/admin/motions/${id}?error=Only+draft+motions+or+open+motions+with+no+votes+can+be+deleted`);
+  if (motion.status !== 'Draft' && motion.status !== 'Open') {
+    return res.redirect(`/admin/motions/${id}?error=Only+draft+or+open+motions+can+be+deleted`);
   }
   
   try {
@@ -1390,7 +1392,7 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
   }
   
   // Verify current password
-  if (current_password !== process.env.ADMIN_PASSWORD) {
+  if (!verifyAdminPassword(current_password)) {
     logger.warn('Admin password change failed - incorrect current password', {
       sessionId: req.session.id,
       ip: req.ip
@@ -1403,7 +1405,7 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
   }
   
   // Check if new password is the same as current
-  if (new_password === process.env.ADMIN_PASSWORD) {
+  if (verifyAdminPassword(new_password)) {
     return res.render('admin_settings', {
       error: 'New password must be different from current password',
       success: null,
@@ -1411,20 +1413,29 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
     });
   }
   
-  // Note: In a production environment, you would update the password in a secure way
-  // Since this uses environment variables, we can only log the change request
-  // The actual password change would need to be done by updating the environment variable
-  logger.info('Admin password change requested', {
-    sessionId: req.session.id,
-    ip: req.ip,
-    timestamp: new Date().toISOString()
-  });
-  
-  res.render('admin_settings', {
-    error: null,
-    success: 'Password change request logged. Please update the ADMIN_PASSWORD environment variable and restart the application.',
-    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
-  });
+  // Update the password in real-time
+  try {
+    updateAdminPassword(new_password, 'admin');
+    
+    logger.info('Admin password changed successfully', {
+      sessionId: req.session.id,
+      ip: req.ip,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.render('admin_settings', {
+      error: null,
+      success: 'Password updated successfully!',
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  } catch (err) {
+    logger.error('Failed to update admin password:', err);
+    res.render('admin_settings', {
+      error: 'Failed to update password. Please try again.',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
 });
 
 // Health check endpoints (for Coolify/Docker/monitoring)
