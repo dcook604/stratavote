@@ -242,7 +242,40 @@ async function sendVotingLink(recipientName, recipientEmail, votingLink, motion)
   }
 }
 
+// Test email configuration
+async function testEmailConfig() {
+  if (!isEmailConfigured()) {
+    return { success: false, error: 'Email environment variables not configured' };
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    return { success: false, error: 'Failed to create email transporter' };
+  }
+
+  try {
+    // Verify connection configuration
+    await transporter.verify();
+    return { success: true };
+  } catch (error) {
+    logger.error('Email configuration test failed', { error: error.message });
+    
+    // Provide more helpful error messages
+    let helpfulError = error.message;
+    if (error.message.includes('535')) {
+      helpfulError = 'Authentication failed. Check SMTP_USER and SMTP_PASSWORD. For Gmail, use an App Password.';
+    } else if (error.message.includes('ENOTFOUND')) {
+      helpfulError = `SMTP host not found: ${process.env.SMTP_HOST}`;
+    } else if (error.message.includes('ECONNREFUSED')) {
+      helpfulError = `Connection refused. Check SMTP_PORT: ${process.env.SMTP_PORT || '587'}`;
+    }
+    
+    return { success: false, error: helpfulError };
+  }
+}
+
 module.exports = {
   isEmailConfigured,
-  sendVotingLink
+  sendVotingLink,
+  testEmailConfig
 };

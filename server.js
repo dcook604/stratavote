@@ -26,7 +26,7 @@ const {
   verifyAdminPassword,
   updateAdminPassword
 } = require('./db');
-const { isEmailConfigured, sendVotingLink } = require('./email');
+const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -1459,6 +1459,43 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
     logger.error('Failed to update admin password:', err);
     res.render('admin_settings', {
       error: 'Failed to update password. Please try again.',
+      success: null,
+      dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+    });
+  }
+});
+
+// Test Email Configuration
+app.post('/admin/settings/test-email', requireAuth, async (req, res) => {
+  try {
+    const result = await testEmailConfig();
+    
+    if (result.success) {
+      logger.info('Email configuration test successful', {
+        sessionId: req.session.id,
+        ip: req.ip
+      });
+      res.render('admin_settings', {
+        error: null,
+        success: 'Email configuration is working correctly!',
+        dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+      });
+    } else {
+      logger.warn('Email configuration test failed', {
+        error: result.error,
+        sessionId: req.session.id,
+        ip: req.ip
+      });
+      res.render('admin_settings', {
+        error: `Email test failed: ${result.error}`,
+        success: null,
+        dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
+      });
+    }
+  } catch (err) {
+    logger.error('Email test error:', err);
+    res.render('admin_settings', {
+      error: `Email test error: ${err.message}`,
       success: null,
       dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite'
     });
