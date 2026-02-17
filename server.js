@@ -920,19 +920,36 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   }
   
   try {
+    logger.info('Attempting to delete motion', { motionId: id, title: motion.title });
+    
+    // Check if motion has any voter tokens
+    const tokens = tokenQueries.getByMotion.all(id);
+    logger.info('Motion has tokens', { motionId: id, tokenCount: tokens.length });
+    
     // Delete in transaction to maintain referential integrity
     const transaction = db.transaction(() => {
       // Delete voter tokens first (foreign key constraint)
-      tokenQueries.deleteByMotion.run(id);
+      logger.info('Deleting voter tokens for motion', { motionId: id });
+      const deleteResult = tokenQueries.deleteByMotion.run(id);
+      logger.info('Voter tokens deleted', { motionId: id, deletedCount: deleteResult.changes });
+      
       // Delete the motion
-      motionQueries.delete.run(id);
+      logger.info('Deleting motion', { motionId: id });
+      const motionResult = motionQueries.delete.run(id);
+      logger.info('Motion deleted', { motionId: id, deletedCount: motionResult.changes });
     });
     
     transaction();
-    logger.info('Motion deleted', { motionId: id, title: motion.title });
+    logger.info('Motion deletion transaction completed successfully', { motionId: id, title: motion.title });
     res.redirect('/admin/dashboard?success=Motion+deleted+successfully');
   } catch (err) {
-    logger.error('Motion deletion error:', err);
+    logger.error('Motion deletion error:', { 
+      motionId: id, 
+      title: motion.title,
+      error: err.message,
+      stack: err.stack,
+      code: err.code
+    });
     res.redirect(`/admin/motions/${id}?error=Failed+to+delete+motion`);
   }
 });
