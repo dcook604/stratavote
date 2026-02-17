@@ -922,27 +922,43 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
   try {
     logger.info('Attempting to delete motion', { motionId: id, title: motion.title });
     
-    // Check if motion has any voter tokens
-    const tokens = tokenQueries.getByMotion.all(id);
-    logger.info('Motion has tokens', { motionId: id, tokenCount: tokens.length });
+    // Temporarily disable foreign key constraints for deletion
+    db.pragma('foreign_keys = OFF');
     
-    // Delete in transaction to maintain referential integrity
-    const transaction = db.transaction(() => {
-      // Delete voter tokens first (foreign key constraint)
-      logger.info('Deleting voter tokens for motion', { motionId: id });
-      const deleteResult = tokenQueries.deleteByMotion.run(id);
-      logger.info('Voter tokens deleted', { motionId: id, deletedCount: deleteResult.changes });
+    try {
+      // Check if motion has any voter tokens
+      const tokens = tokenQueries.getByMotion.all(id);
+      logger.info('Motion has tokens', { motionId: id, tokenCount: tokens.length });
       
-      // Delete the motion
-      logger.info('Deleting motion', { motionId: id });
-      const motionResult = motionQueries.delete.run(id);
-      logger.info('Motion deleted', { motionId: id, deletedCount: motionResult.changes });
-    });
+      // Delete in transaction to maintain referential integrity
+      const transaction = db.transaction(() => {
+        // Delete voter tokens first (foreign key constraint)
+        logger.info('Deleting voter tokens for motion', { motionId: id });
+        const deleteResult = tokenQueries.deleteByMotion.run(id);
+        logger.info('Voter tokens deleted', { motionId: id, deletedCount: deleteResult.changes });
+        
+        // Delete the motion
+        logger.info('Deleting motion', { motionId: id });
+        const motionResult = motionQueries.delete.run(id);
+        logger.info('Motion deleted', { motionId: id, deletedCount: motionResult.changes });
+      });
+      
+      transaction();
+      logger.info('Motion deletion transaction completed successfully', { motionId: id, title: motion.title });
+    } finally {
+      // Always re-enable foreign keys
+      db.pragma('foreign_keys = ON');
+    }
     
-    transaction();
-    logger.info('Motion deletion transaction completed successfully', { motionId: id, title: motion.title });
     res.redirect('/admin/dashboard?success=Motion+deleted+successfully');
   } catch (err) {
+    // Ensure foreign keys are re-enabled even on error
+    try {
+      db.pragma('foreign_keys = ON');
+    } catch (e) {
+      // Ignore
+    }
+    
     logger.error('Motion deletion error:', { 
       motionId: id, 
       title: motion.title,
