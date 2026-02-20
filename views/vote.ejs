@@ -7,10 +7,12 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="container">
-    <div class="vote-card">
-      <h1>Spectrum 4 Council Vote</h1>
+  <header class="vote-header">
+    <div class="vote-header-inner">Spectrum 4 Council Vote</div>
+  </header>
 
+  <div class="vote-main">
+    <div class="vote-card card">
       <% if (error) { %>
         <div class="alert alert-error">
           <%= error %>
@@ -18,32 +20,88 @@
       <% } else if (motion && token) { %>
         <div class="motion-info">
           <h2><%= motion.title %></h2>
-          <p class="description"><%= motion.description %></p>
-
+          <% if (motion.description) { %>
+            <p class="description"><%= motion.description %></p>
+          <% } %>
           <div class="meta">
-            <p><strong>Voting closes:</strong> <%= new Date(motion.close_at).toLocaleString() %></p>
+            <strong>Voting closes:</strong> <%= new Date(motion.close_at).toLocaleString() %>
           </div>
         </div>
 
-        <form method="POST" action="/vote/<%= motion.id %>" class="vote-form">
-          <input type="hidden" name="token" value="<%= token.token %>">
+        <div class="vote-form">
+          <h3>Select your vote</h3>
 
-          <h3>Select your vote:</h3>
-
-          <div class="vote-options">
-            <% motion.options.forEach(option => { %>
-              <button type="submit" name="choice" value="<%= option %>" class="vote-button">
-                <%= option %>
-              </button>
-            <% }) %>
+          <!-- Confirmation overlay (hidden by default) -->
+          <div id="confirmOverlay" style="display:none; margin-bottom: 1rem;">
+            <div class="alert alert-info" style="margin-bottom: 0.75rem;">
+              You are about to vote: <strong id="confirmChoice"></strong>.<br>
+              <small>This action cannot be undone — your token will be used.</small>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button type="button" id="confirmBtn" class="btn btn-primary" style="flex:1;">Confirm Vote</button>
+              <button type="button" id="cancelBtn" class="btn btn-secondary" style="flex:1;">Cancel</button>
+            </div>
           </div>
-        </form>
+
+          <form method="POST" action="/vote/<%= motion.id %>" class="vote-form-inner" id="voteForm">
+            <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+            <input type="hidden" name="token" value="<%= token.token %>">
+            <input type="hidden" name="choice" id="choiceInput" value="">
+
+            <div class="vote-options" id="voteOptions">
+              <% motion.options.forEach(option => { %>
+                <button type="button"
+                        class="vote-button"
+                        data-choice="<%= option %>">
+                  <%= option %>
+                </button>
+              <% }) %>
+            </div>
+          </form>
+        </div>
 
         <p class="privacy-note">
-          Your vote is anonymous and will be recorded securely. This link can only be used once.
+          &#128274; Your vote is anonymous and recorded securely. This link can only be used once.
         </p>
       <% } %>
     </div>
   </div>
+
+  <script>
+    (function() {
+      var overlay = document.getElementById('confirmOverlay');
+      var confirmChoice = document.getElementById('confirmChoice');
+      var confirmBtn = document.getElementById('confirmBtn');
+      var cancelBtn = document.getElementById('cancelBtn');
+      var voteOptions = document.getElementById('voteOptions');
+      var choiceInput = document.getElementById('choiceInput');
+      var voteForm = document.getElementById('voteForm');
+
+      if (!overlay) return;
+
+      document.querySelectorAll('.vote-button').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var choice = this.getAttribute('data-choice');
+          confirmChoice.textContent = choice;
+          choiceInput.value = choice;
+          overlay.style.display = 'block';
+          voteOptions.style.display = 'none';
+          overlay.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+      });
+
+      cancelBtn.addEventListener('click', function() {
+        overlay.style.display = 'none';
+        voteOptions.style.display = 'flex';
+        choiceInput.value = '';
+      });
+
+      confirmBtn.addEventListener('click', function() {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Submitting...';
+        voteForm.submit();
+      });
+    })();
+  </script>
 </body>
 </html>

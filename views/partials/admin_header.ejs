@@ -1,7 +1,12 @@
 <header class="admin-header">
   <div class="container">
     <div class="header-content">
-      <h1 class="logo">Spectrum 4 Voting System</h1>
+      <h1 class="logo">Spectrum 4 Voting</h1>
+      <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
       <nav>
         <a href="/admin/dashboard">Dashboard</a>
         <a href="/admin/motions/new">New Motion</a>
@@ -16,3 +21,31 @@
     </div>
   </div>
 </header>
+
+<div class="nav-drawer" id="navDrawer">
+  <div class="nav-drawer-inner container">
+    <a href="/admin/dashboard">Dashboard</a>
+    <a href="/admin/motions/new">New Motion</a>
+    <a href="/admin/council">Council</a>
+    <a href="/admin/export">Export Results</a>
+    <a href="/admin/settings">Admin</a>
+    <form method="POST" action="/admin/logout">
+      <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+      <button type="submit" class="btn-link" style="padding: 0.65rem 0.75rem; width: 100%; text-align: left; color: rgba(255,255,255,0.85);">Logout</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function() {
+    var toggle = document.getElementById('navToggle');
+    var drawer = document.getElementById('navDrawer');
+    if (toggle && drawer) {
+      toggle.addEventListener('click', function() {
+        var isOpen = drawer.classList.toggle('open');
+        toggle.classList.toggle('open', isOpen);
+        toggle.setAttribute('aria-expanded', isOpen);
+      });
+    }
+  })();
+</script>

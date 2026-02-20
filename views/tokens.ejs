@@ -11,13 +11,11 @@
 
   <div class="container">
     <div class="page-header">
-      <h1>Voter Tokens</h1>
-      <a href="/admin/motions/<%= motion.id %>" class="btn btn-secondary">Back to Motion</a>
-    </div>
-
-    <div class="card">
-      <h2><%= motion.title %></h2>
-      <p class="text-muted">Manage voting links for this motion</p>
+      <div>
+        <h1>Voter Tokens</h1>
+        <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.2rem;"><%= motion.title %></p>
+      </div>
+      <a href="/admin/motions/<%= motion.id %>" class="btn btn-secondary">&#8592; Back to Motion</a>
     </div>
 
     <% if (success) { %>
@@ -32,31 +30,27 @@
       <form method="POST" action="/admin/motions/<%= motion.id %>/tokens">
         <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
 
-        <!-- Council Member Selection -->
         <% if (councilMembers.length > 0) { %>
           <div class="form-group">
             <label>Select from Saved Council Members</label>
-            <div class="council-member-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 0.5rem; border-radius: 4px;">
+            <div class="council-member-list">
               <% councilMembers.forEach(member => { %>
-                <label class="checkbox-label" style="display: block; padding: 0.25rem 0;">
+                <label class="checkbox-label">
                   <input type="checkbox" name="selected_council_members" value="<%= member.id %>">
-                  <span><%= member.name %> (<%= member.email %><% if (member.unit_number) { %>, <%= member.unit_number %><% } %>)</span>
+                  <span><%= member.name %> (<%= member.email %><% if (member.unit_number) { %>, Unit <%= member.unit_number %><% } %>)</span>
                 </label>
               <% }) %>
             </div>
-            <small>Select members to generate tokens for</small>
+            <small>Check members to generate tokens for them</small>
           </div>
 
-          <div class="form-group" style="text-align: center; color: #666;">
-            <strong>- OR -</strong>
-          </div>
+          <div class="or-divider">OR</div>
         <% } %>
 
-        <!-- Manual Entry -->
         <div class="form-group">
-          <label for="recipients">Manual Entry (one per line)</label>
-          <textarea id="recipients" name="recipients" rows="8" placeholder="John Doe,john@example.com,Unit 101&#10;Jane Smith,jane@example.com,Unit 102"></textarea>
-          <small>Format: Name,Email,Unit (unit is optional). You can use both selection and manual entry - duplicates will be removed.</small>
+          <label for="recipients">Manual Entry <span class="text-muted" style="font-weight: normal;">(one per line)</span></label>
+          <textarea id="recipients" name="recipients" rows="6" placeholder="John Doe,john@example.com,Unit 101&#10;Jane Smith,jane@example.com,Unit 102"></textarea>
+          <small>Format: Name, Email, Unit (unit optional). Duplicates with above selections are removed automatically.</small>
         </div>
 
         <button type="submit" class="btn btn-primary">Generate Tokens</button>
@@ -64,12 +58,16 @@
     </div>
 
     <div class="card">
-      <h3>Existing Tokens (<%= tokens.length %>)</h3>
+      <h3>Existing Tokens <span class="text-muted" style="font-weight: normal; font-size: 0.9rem;">(<%= tokens.length %>)</span></h3>
 
       <% if (tokens.length === 0) { %>
-        <p class="text-muted">No tokens generated yet.</p>
+        <div class="empty-state" style="padding: 2rem 1rem; box-shadow: none; border: none;">
+          <p>No tokens generated yet.</p>
+        </div>
       <% } else { %>
-        <div class="table-responsive">
+
+        <!-- Desktop table view -->
+        <div class="token-table-view table-responsive">
           <table class="table">
             <thead>
               <tr>
@@ -77,7 +75,7 @@
                 <th>Email</th>
                 <th>Unit</th>
                 <th>Status</th>
-                <th>Email Status</th>
+                <th>Email</th>
                 <th>Used At</th>
                 <th>Voting Link</th>
                 <th>Actions</th>
@@ -94,9 +92,9 @@
                   </td>
                   <td>
                     <% if (token.email_sent) { %>
-                      <span class="badge badge-success" title="Sent at <%= new Date(token.email_sent_at).toLocaleString() %>">✓ Sent</span>
+                      <span class="badge badge-success" title="Sent at <%= new Date(token.email_sent_at).toLocaleString() %>">&#10003; Sent</span>
                     <% } else if (token.email_error) { %>
-                      <span class="badge badge-danger" title="<%= token.email_error %>">✗ Failed</span>
+                      <span class="badge badge-danger" title="<%= token.email_error %>">&#10007; Failed</span>
                     <% } else if (token.recipient_email) { %>
                       <span class="badge badge-secondary">Not Sent</span>
                     <% } else { %>
@@ -123,20 +121,18 @@
                   </td>
                   <td>
                     <% if (token.status === 'Active') { %>
-                      <form method="POST" action="/admin/tokens/<%= token.id %>/revoke" style="display: inline;">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
-                        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">
-                          Revoke
-                        </button>
-                      </form>
-                      <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
-                        <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email" style="display: inline; margin-left: 5px;">
+                      <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+                        <form method="POST" action="/admin/tokens/<%= token.id %>/revoke" style="display: inline;">
                           <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
-                          <button type="submit" class="btn btn-primary btn-sm" title="Resend voting link email">
-                            📧 Resend
-                          </button>
+                          <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">Revoke</button>
                         </form>
-                      <% } %>
+                        <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
+                          <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email" style="display: inline;">
+                            <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                            <button type="submit" class="btn btn-primary btn-sm" title="Resend voting link email">Resend</button>
+                          </form>
+                        <% } %>
+                      </div>
                     <% } else { %>
                       -
                     <% } %>
@@ -146,6 +142,59 @@
             </tbody>
           </table>
         </div>
+
+        <!-- Mobile card view -->
+        <div class="token-cards">
+          <% tokens.forEach(token => { %>
+            <div class="token-card">
+              <div class="token-card-header">
+                <div>
+                  <div class="token-card-name"><%= token.recipient_name || 'Unknown' %></div>
+                  <div class="token-card-meta">
+                    <% if (token.recipient_email) { %><%= token.recipient_email %><br><% } %>
+                    <% if (token.unit_number) { %>Unit <%= token.unit_number %><% } %>
+                  </div>
+                </div>
+                <span class="badge badge-<%= token.status.toLowerCase() %>"><%= token.status %></span>
+              </div>
+
+              <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem;">
+                <% if (token.email_sent) { %>
+                  <span class="badge badge-success">&#10003; Email Sent</span>
+                <% } else if (token.email_error) { %>
+                  <span class="badge badge-danger">&#10007; Email Failed</span>
+                <% } else if (token.recipient_email) { %>
+                  <span class="badge badge-secondary">Email Not Sent</span>
+                <% } %>
+                <% if (token.used_at) { %>
+                  <span class="badge badge-secondary">Used <%= new Date(token.used_at).toLocaleDateString() %></span>
+                <% } %>
+              </div>
+
+              <% if (token.status === 'Active') { %>
+                <input type="text"
+                       value="<%= baseUrl %>/vote/<%= motion.id %>?token=<%= token.token %>"
+                       class="token-card-link"
+                       readonly
+                       onclick="this.select()">
+
+                <div class="token-card-actions">
+                  <form method="POST" action="/admin/tokens/<%= token.id %>/revoke">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">Revoke</button>
+                  </form>
+                  <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
+                    <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                      <button type="submit" class="btn btn-primary btn-sm">Resend Email</button>
+                    </form>
+                  <% } %>
+                </div>
+              <% } %>
+            </div>
+          <% }) %>
+        </div>
+
       <% } %>
     </div>
   </div>

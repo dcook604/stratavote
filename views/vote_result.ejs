@@ -3,27 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vote Result - Spectrum 4 Voting System</title>
+  <title>Vote Recorded - Spectrum 4 Voting System</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="container">
-    <div class="vote-card">
-      <h1>Vote Result</h1>
+  <header class="vote-header">
+    <div class="vote-header-inner">Spectrum 4 Council Vote</div>
+  </header>
 
+  <div class="vote-main">
+    <div class="vote-card card text-center">
       <% if (success) { %>
-        <div class="alert alert-success">
-          ✓ <%= message %>
-        </div>
+        <div class="vote-result-icon">&#10003;</div>
+        <h2 style="color: var(--color-success); margin-bottom: 0.75rem;">Vote Recorded</h2>
+        <p style="color: var(--color-text-muted); margin-bottom: 1.5rem;"><%= message %></p>
       <% } else { %>
-        <div class="alert alert-error">
-          ✗ <%= message %>
-        </div>
+        <div class="vote-result-icon">&#10007;</div>
+        <h2 style="color: var(--color-danger); margin-bottom: 0.75rem;">Unable to Record Vote</h2>
+        <p style="color: var(--color-text-muted); margin-bottom: 1.5rem;"><%= message %></p>
       <% } %>
-
-      <p class="text-center">
-        You may now close this window.
-      </p>
+      <p class="text-muted" style="font-size: 0.875rem;">You may now close this window.</p>
     </div>
   </div>
 </body>
