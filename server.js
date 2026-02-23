@@ -11,6 +11,8 @@ const csrf = require('csurf');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const Joi = require('joi');
+const multer = require('multer');
+const { parse: parseCSV } = require('csv-parse/sync');
 const logger = require('./logger');
 const {
   db,
@@ -141,6 +143,19 @@ const schemas = {
     unit_number: Joi.string().max(50).allow('').optional()
   })
 };
+
+// Multer: memory storage for CSV uploads (500 KB max, CSV only)
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  }
+});
 
 // Validation middleware
 function validate(schema) {
@@ -863,6 +878,136 @@ app.get('/admin/dashboard', requireAuth, (req, res) => {
 });
 
 // New motion form
+// CSV template download
+app.get('/admin/motions/import/template.csv', requireAuth, (req, res) => {
+  const csv = [
+    'title,description,open_at,close_at,required_majority,options',
+    '"Approve 2024 Budget","Vote to approve the annual operating budget of $250,000","2026-03-01T09:00","2026-03-08T17:00","Simple","Yes,No,Abstain"',
+    '"Amend Bylaws Section 4","Proposal to amend noise restriction rules in section 4.2","2026-03-01T09:00","2026-03-08T17:00","TwoThirds",""'
+  ].join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="motions-import-template.csv"');
+  res.send(csv);
+});
+
+// Import motions via CSV — form
+app.get('/admin/motions/import', requireAuth, (req, res) => {
+  res.render('motion_import', { results: null, error: null });
+});
+
+// Import motions via CSV — process upload
+app.post('/admin/motions/import', requireAuth, (req, res, next) => {
+  csvUpload.single('csv_file')(req, res, (uploadErr) => {
+    if (uploadErr) {
+      return res.render('motion_import', { results: null, error: uploadErr.message });
+    }
+
+    if (!req.file) {
+      return res.render('motion_import', { results: null, error: 'No file uploaded.' });
+    }
+
+    let rows;
+    try {
+      rows = parseCSV(req.file.buffer.toString('utf8'), {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        bom: true
+      });
+    } catch (parseErr) {
+      return res.render('motion_import', { results: null, error: `CSV parse error: ${parseErr.message}` });
+    }
+
+    if (rows.length === 0) {
+      return res.render('motion_import', { results: null, error: 'The CSV file contains no data rows.' });
+    }
+
+    if (rows.length > 100) {
+      return res.render('motion_import', { results: null, error: 'Maximum 100 motions per import. Please split into smaller files.' });
+    }
+
+    const rowSchema = Joi.object({
+      title: Joi.string().min(5).max(200).required(),
+      description: Joi.string().min(10).max(5000).required(),
+      open_at: Joi.string().required(),
+      close_at: Joi.string().required(),
+      required_majority: Joi.string().valid('Simple', 'TwoThirds').required(),
+      options: Joi.string().max(500).allow('').optional()
+    });
+
+    const created = [];
+    const failed = [];
+
+    const importTx = db.transaction(() => {
+      for (let i = 0; i < rows.length; i++) {
+        const rowNum = i + 2; // +2: 1-based + header row
+        const row = rows[i];
+
+        const { error: valErr } = rowSchema.validate(row, { allowUnknown: true, stripUnknown: true });
+        if (valErr) {
+          failed.push({ row: rowNum, title: row.title || '(blank)', reason: valErr.details[0].message });
+          continue;
+        }
+
+        const openAt = parseMotionDateTime(row.open_at);
+        const closeAt = parseMotionDateTime(row.close_at);
+
+        if (isNaN(openAt.getTime())) {
+          failed.push({ row: rowNum, title: row.title, reason: 'Invalid open_at date/time' });
+          continue;
+        }
+        if (isNaN(closeAt.getTime())) {
+          failed.push({ row: rowNum, title: row.title, reason: 'Invalid close_at date/time' });
+          continue;
+        }
+        if (closeAt <= openAt) {
+          failed.push({ row: rowNum, title: row.title, reason: 'close_at must be after open_at' });
+          continue;
+        }
+
+        let optionsArray = ['Yes', 'No', 'Abstain'];
+        if (row.options && row.options.trim()) {
+          optionsArray = row.options.split(',').map(o => o.trim()).filter(o => o);
+          if (optionsArray.length < 2) {
+            failed.push({ row: rowNum, title: row.title, reason: 'options must contain at least 2 choices' });
+            continue;
+          }
+        }
+
+        try {
+          const motionId = generateUUID();
+          const motionRef = generateMotionRef();
+          motionQueries.create.run(
+            motionId,
+            motionRef,
+            row.title.trim(),
+            row.description.trim(),
+            JSON.stringify(optionsArray),
+            openAt.toISOString(),
+            closeAt.toISOString(),
+            'Draft',
+            row.required_majority,
+            new Date().toISOString()
+          );
+          created.push({ row: rowNum, title: row.title, motionId, motionRef });
+        } catch (dbErr) {
+          failed.push({ row: rowNum, title: row.title, reason: dbErr.message });
+        }
+      }
+    });
+
+    try {
+      importTx();
+    } catch (txErr) {
+      logger.error('CSV import transaction error:', txErr);
+      return res.render('motion_import', { results: null, error: `Import failed: ${txErr.message}` });
+    }
+
+    logger.info('CSV motion import complete', { created: created.length, failed: failed.length });
+    res.render('motion_import', { results: { created, failed }, error: null });
+  });
+});
+
 app.get('/admin/motions/new', requireAuth, (req, res) => {
   res.render('motion_new', { error: null });
 });

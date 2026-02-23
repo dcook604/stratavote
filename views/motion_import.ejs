@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Import Motions - Spectrum 4 Voting System</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .import-zone {
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      background: var(--color-bg);
+      transition: border-color 0.2s, background 0.2s;
+      cursor: pointer;
+      position: relative;
+    }
+    .import-zone.dragover {
+      border-color: var(--color-primary);
+      background: #eef4ff;
+    }
+    .import-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .import-zone-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+      line-height: 1;
+    }
+    .import-zone-label {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--color-text);
+      margin-bottom: 0.35rem;
+    }
+    .import-zone-hint {
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+    }
+    .import-zone-filename {
+      margin-top: 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--color-primary);
+    }
+
+    .results-summary {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .result-stat {
+      flex: 1;
+      min-width: 130px;
+      padding: 1.1rem 1.25rem;
+      border-radius: var(--radius-lg);
+      text-align: center;
+    }
+    .result-stat.success { background: #d1fae5; border: 1px solid #6ee7b7; }
+    .result-stat.failure { background: #fee2e2; border: 1px solid #fca5a5; }
+    .result-stat .stat-num {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .result-stat.success .stat-num { color: #065f46; }
+    .result-stat.failure .stat-num { color: #991b1b; }
+    .result-stat .stat-label {
+      font-size: 0.8rem;
+      margin-top: 0.3rem;
+      color: var(--color-text-muted);
+    }
+
+    .result-table th, .result-table td {
+      padding: 0.55rem 0.75rem;
+      font-size: 0.85rem;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+      vertical-align: middle;
+    }
+    .result-table th { font-weight: 600; background: var(--color-bg); }
+
+    .format-box {
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem 1.5rem;
+    }
+    .format-box code {
+      display: block;
+      font-family: monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      white-space: pre;
+      overflow-x: auto;
+      color: var(--color-text);
+    }
+    .format-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    .format-table th, .format-table td {
+      padding: 0.45rem 0.75rem;
+      font-size: 0.82rem;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .format-table th { font-weight: 600; background: var(--color-bg); }
+    .badge-req { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 0.15rem 0.45rem; border-radius: 999px; background: #dbeafe; color: #1e40af; }
+    .badge-opt { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 0.15rem 0.45rem; border-radius: 999px; background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+  </style>
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Import Motions via CSV</h1>
+      <a href="/admin/dashboard" class="btn btn-secondary">Cancel</a>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <% if (!results) { %>
+
+      <!-- Upload Form -->
+      <div class="card">
+        <h3>Upload CSV File</h3>
+        <p style="color: var(--color-text-muted); margin-bottom: 1.25rem;">
+          All imported motions are created as <strong>Draft</strong> status. Review and open them individually from the dashboard.
+        </p>
+
+        <form method="POST" action="/admin/motions/import" enctype="multipart/form-data" id="importForm">
+          <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+
+          <div class="form-group">
+            <label>CSV File *</label>
+            <div class="import-zone" id="importZone">
+              <input type="file" name="csv_file" id="csv_file" accept=".csv,text/csv" required>
+              <div class="import-zone-icon">📄</div>
+              <div class="import-zone-label">Click to select or drag &amp; drop a CSV file</div>
+              <div class="import-zone-hint">Maximum 100 motions · 500 KB limit · .csv files only</div>
+              <div class="import-zone-filename" id="fileNameDisplay" style="display:none;"></div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 1rem;">
+            <button type="submit" class="btn btn-primary" id="submitBtn">Import Motions</button>
+            <a href="/admin/motions/import/template.csv" class="btn btn-secondary">Download Template</a>
+          </div>
+        </form>
+      </div>
+
+      <!-- CSV Format Reference -->
+      <div class="card">
+        <h3>CSV Format</h3>
+        <p style="color: var(--color-text-muted); margin-bottom: 1rem;">
+          The first row must be a header row with these column names. Column order does not matter.
+          Fields containing commas must be wrapped in double-quotes.
+        </p>
+
+        <div class="format-box">
+          <code>title,description,open_at,close_at,required_majority,options
+"Approve 2024 Budget","Vote to approve the annual budget of $250,000","2026-03-01T09:00","2026-03-08T17:00","Simple","Yes,No,Abstain"
+"Amend Bylaws Section 4","Proposal to amend noise restriction rules","2026-03-01T09:00","2026-03-08T17:00","TwoThirds",""</code>
+        </div>
+
+        <table class="format-table">
+          <thead>
+            <tr>
+              <th>Column</th>
+              <th>Required</th>
+              <th>Format / Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>title</code></td>
+              <td><span class="badge-req">Required</span></td>
+              <td>5–200 characters</td>
+            </tr>
+            <tr>
+              <td><code>description</code></td>
+              <td><span class="badge-req">Required</span></td>
+              <td>10–5000 characters. Wrap in double-quotes if it contains commas.</td>
+            </tr>
+            <tr>
+              <td><code>open_at</code></td>
+              <td><span class="badge-req">Required</span></td>
+              <td><code>YYYY-MM-DDTHH:mm</code> — e.g. <code>2026-03-01T09:00</code></td>
+            </tr>
+            <tr>
+              <td><code>close_at</code></td>
+              <td><span class="badge-req">Required</span></td>
+              <td><code>YYYY-MM-DDTHH:mm</code> — must be after <code>open_at</code></td>
+            </tr>
+            <tr>
+              <td><code>required_majority</code></td>
+              <td><span class="badge-req">Required</span></td>
+              <td><code>Simple</code> or <code>TwoThirds</code> (case-sensitive)</td>
+            </tr>
+            <tr>
+              <td><code>options</code></td>
+              <td><span class="badge-opt">Optional</span></td>
+              <td>Comma-separated choices wrapped in double-quotes. Defaults to <code>Yes,No,Abstain</code>. At least 2 choices required if provided.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    <% } else { %>
+
+      <!-- Results -->
+      <div class="card">
+        <h3>Import Results</h3>
+        <div class="results-summary">
+          <div class="result-stat success">
+            <div class="stat-num"><%= results.created.length %></div>
+            <div class="stat-label">Motion<%= results.created.length !== 1 ? 's' : '' %> Created</div>
+          </div>
+          <% if (results.failed.length > 0) { %>
+          <div class="result-stat failure">
+            <div class="stat-num"><%= results.failed.length %></div>
+            <div class="stat-label">Row<%= results.failed.length !== 1 ? 's' : '' %> Failed</div>
+          </div>
+          <% } %>
+        </div>
+
+        <% if (results.created.length > 0) { %>
+          <h4 style="margin-bottom: 0.75rem;">Created Motions</h4>
+          <div class="table-container" style="margin-bottom: 1.5rem;">
+            <table class="result-table" style="width:100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Ref</th>
+                  <th>Title</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <% for (const item of results.created) { %>
+                <tr>
+                  <td style="color: var(--color-text-muted);"><%= item.row %></td>
+                  <td><code><%= item.motionRef %></code></td>
+                  <td><%= item.title %></td>
+                  <td><a href="/admin/motions/<%= item.motionId %>" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.8rem;">View</a></td>
+                </tr>
+                <% } %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+
+        <% if (results.failed.length > 0) { %>
+          <h4 style="margin-bottom: 0.75rem; color: #991b1b;">Failed Rows</h4>
+          <div class="table-container">
+            <table class="result-table" style="width:100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Title</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% for (const item of results.failed) { %>
+                <tr>
+                  <td style="color: var(--color-text-muted);"><%= item.row %></td>
+                  <td><%= item.title %></td>
+                  <td style="color: #991b1b;"><%= item.reason %></td>
+                </tr>
+                <% } %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem;">
+        <a href="/admin/dashboard" class="btn btn-primary">Go to Dashboard</a>
+        <a href="/admin/motions/import" class="btn btn-secondary">Import Another File</a>
+      </div>
+
+    <% } %>
+  </div>
+
+  <script>
+    (function () {
+      var zone = document.getElementById('importZone');
+      var input = document.getElementById('csv_file');
+      var nameDisplay = document.getElementById('fileNameDisplay');
+      var submitBtn = document.getElementById('submitBtn');
+
+      if (!zone || !input) return;
+
+      input.addEventListener('change', function () {
+        if (this.files && this.files[0]) {
+          nameDisplay.textContent = this.files[0].name;
+          nameDisplay.style.display = '';
+        }
+      });
+
+      zone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        zone.classList.add('dragover');
+      });
+      zone.addEventListener('dragleave', function () {
+        zone.classList.remove('dragover');
+      });
+      zone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          var dt = new DataTransfer();
+          dt.items.add(e.dataTransfer.files[0]);
+          input.files = dt.files;
+          nameDisplay.textContent = e.dataTransfer.files[0].name;
+          nameDisplay.style.display = '';
+        }
+      });
+
+      var form = document.getElementById('importForm');
+      if (form && submitBtn) {
+        form.addEventListener('submit', function () {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Importing…';
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
