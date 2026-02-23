@@ -469,6 +469,22 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_motion_notifications_next_attempt ON motion_notifications(next_attempt_at);
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS token_email_outbox (
+      id TEXT PRIMARY KEY,
+      token_id INTEGER NOT NULL REFERENCES voter_tokens(id),
+      status TEXT NOT NULL CHECK(status IN ('PENDING', 'SENT', 'FAILED')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NULL,
+      created_at TEXT NOT NULL,
+      sent_at TEXT NULL,
+      last_error TEXT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_token_email_outbox_status ON token_email_outbox(status);
+    CREATE INDEX IF NOT EXISTS idx_token_email_outbox_next_attempt ON token_email_outbox(next_attempt_at);
+  `);
+
   // Initialize admin password if not exists
   const adminSettings = db.prepare('SELECT * FROM admin_settings WHERE id = 1').get();
   if (!adminSettings && process.env.ADMIN_PASSWORD) {
@@ -671,6 +687,34 @@ const motionNotificationQueries = {
   `)
 };
 
+const tokenEmailOutboxQueries = {
+  insert: db.prepare(`
+    INSERT INTO token_email_outbox (id, token_id, status, attempts, next_attempt_at, created_at)
+    VALUES (?, ?, 'PENDING', 0, NULL, ?)
+  `),
+
+  getPending: db.prepare(`
+    SELECT *
+    FROM token_email_outbox
+    WHERE status IN ('PENDING', 'FAILED')
+      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+    ORDER BY created_at ASC
+    LIMIT ?
+  `),
+
+  markSent: db.prepare(`
+    UPDATE token_email_outbox
+    SET status = 'SENT', sent_at = ?, last_error = NULL
+    WHERE id = ?
+  `),
+
+  markFailed: db.prepare(`
+    UPDATE token_email_outbox
+    SET status = 'FAILED', attempts = ?, next_attempt_at = ?, last_error = ?
+    WHERE id = ?
+  `)
+};
+
 // Transaction wrapper for vote submission
 function submitVote(motionId, tokenId, choice, userAgent, ipHash) {
   try {
@@ -755,6 +799,22 @@ function setSetting(key, value) {
   return appSettingsQueries.upsert.run(key, value, new Date().toISOString());
 }
 
+function enqueueTokenEmail(tokenId) {
+  tokenEmailOutboxQueries.insert.run(generateUUID(), tokenId, new Date().toISOString());
+}
+
+function getPendingTokenEmails(nowIso, limit) {
+  return tokenEmailOutboxQueries.getPending.all(nowIso, limit);
+}
+
+function markTokenEmailSent(outboxId) {
+  return tokenEmailOutboxQueries.markSent.run(new Date().toISOString(), outboxId);
+}
+
+function markTokenEmailFailed(outboxId, attempts, nextAttemptAtIso, lastError) {
+  return tokenEmailOutboxQueries.markFailed.run(attempts, nextAttemptAtIso, lastError, outboxId);
+}
+
 function ensureResultsEmailNotification(motionId) {
   const result = motionNotificationQueries.ensurePending.run(generateUUID(), motionId, new Date().toISOString());
   return result && typeof result.changes === 'number' ? result.changes : 0;
@@ -794,5 +854,9 @@ module.exports = {
   ensureResultsEmailNotification,
   getPendingNotifications,
   markNotificationSent,
-  markNotificationFailed
+  markNotificationFailed,
+  enqueueTokenEmail,
+  getPendingTokenEmails,
+  markTokenEmailSent,
+  markTokenEmailFailed
 };

@@ -30,11 +30,12 @@ const {
   ensureResultsEmailNotification,
   getPendingNotifications,
   markNotificationSent,
-  markNotificationFailed
+  markNotificationFailed,
+  enqueueTokenEmail
 } = require('./db');
 const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
 const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
-const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails } = require('./services/notificationWorker');
+const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -354,11 +355,12 @@ const sqliteStore = new SqliteStore({
   }
 });
 
-// Background worker: close motions when time ends and send results emails via outbox
+// Background worker: close motions when time ends and send results/token emails via outbox
 setInterval(async () => {
   try {
     sweepAndEnqueueCompletedMotions();
     await processPendingResultsEmails({ baseUrl: BASE_URL, limit: 25 });
+    await processPendingTokenEmails({ baseUrl: BASE_URL, limit: 50 });
   } catch (err) {
     logger.error('notification worker tick failed', { error: err.message });
   }
@@ -1077,7 +1079,7 @@ app.get('/admin/motions/:id/tokens', requireAuth, (req, res) => {
 });
 
 // Generate tokens
-app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), async (req, res) => {
+app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), (req, res) => {
   const { id } = req.params;
   const { recipients, selected_council_members } = req.body;
 
@@ -1132,7 +1134,6 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
   let created = 0;
   let skippedDuplicates = 0;
   let emailsSent = 0;
-  let emailsFailed = 0;
 
   const emailConfigured = isEmailConfigured();
 
@@ -1176,42 +1177,10 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
       }
       created++;
 
-      // Try to send email if configured and email address is provided
+      // Queue email for background delivery if configured and email address is provided
       if (emailConfigured && email) {
-        const votingLink = `${BASE_URL}/vote/${id}?token=${token}`;
-
-        try {
-          const emailResult = await sendVotingLink(name, email, votingLink, motion);
-
-          if (emailResult.success) {
-            // Update token with email sent status
-            tokenQueries.updateEmailStatus.run(
-              1, // email_sent = true
-              new Date().toISOString(), // email_sent_at
-              null, // email_error
-              result.lastInsertRowid
-            );
-            emailsSent++;
-          } else {
-            // Update token with email error
-            tokenQueries.updateEmailStatus.run(
-              0, // email_sent = false
-              null, // email_sent_at
-              emailResult.error || 'Unknown error', // email_error
-              result.lastInsertRowid
-            );
-            emailsFailed++;
-          }
-        } catch (emailErr) {
-          logger.error('Email send error:', emailErr);
-          tokenQueries.updateEmailStatus.run(
-            0,
-            null,
-            emailErr.message,
-            result.lastInsertRowid
-          );
-          emailsFailed++;
-        }
+        enqueueTokenEmail(result.lastInsertRowid);
+        emailsSent++;
       }
     }
 
@@ -1221,15 +1190,19 @@ app.post('/admin/motions/:id/tokens', requireAuth, validate(schemas.token), asyn
       message += `. Skipped ${skippedDuplicates} duplicate(s)`;
     }
     if (emailConfigured) {
-      message += `. Sent ${emailsSent} email(s)`;
-      if (emailsFailed > 0) {
-        message += `, ${emailsFailed} failed`;
-      }
+      message += `. ${emailsSent} email(s) queued for delivery`;
     } else {
       message += `. Email not configured - please copy links manually`;
     }
 
     res.redirect(`/admin/motions/${id}/tokens?success=${encodeURIComponent(message)}`);
+
+    // Best-effort: kick off email processing immediately so messages go out without waiting for the next tick
+    if (emailsSent > 0) {
+      processPendingTokenEmails({ baseUrl: BASE_URL, limit: 50 }).catch(err => {
+        logger.error('immediate token email processing failed', { motionId: id, error: err.message });
+      });
+    }
   } catch (err) {
     logger.error('Token creation error:', err);
     res.redirect(`/admin/motions/${id}/tokens?error=Failed+to+create+tokens`);
@@ -1255,7 +1228,7 @@ app.post('/admin/tokens/:tokenId/revoke', requireAuth, (req, res) => {
 });
 
 // Resend email for a token
-app.post('/admin/tokens/:tokenId/resend-email', requireAuth, async (req, res) => {
+app.post('/admin/tokens/:tokenId/resend-email', requireAuth, (req, res) => {
   const { tokenId } = req.params;
 
   try {
@@ -1276,42 +1249,18 @@ app.post('/admin/tokens/:tokenId/resend-email', requireAuth, async (req, res) =>
       return res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Email+not+configured`);
     }
 
-    const motion = motionQueries.getById.get(token.motion_id);
-    if (!motion) {
-      return res.status(404).send('Motion not found');
-    }
+    enqueueTokenEmail(tokenId);
+    res.redirect(`/admin/motions/${token.motion_id}/tokens?success=Email+queued+for+delivery`);
 
-    const votingLink = `${BASE_URL}/vote/${token.motion_id}?token=${token.token}`;
-
-    const emailResult = await sendVotingLink(
-      token.recipient_name,
-      token.recipient_email,
-      votingLink,
-      motion
-    );
-
-    if (emailResult.success) {
-      tokenQueries.updateEmailStatus.run(
-        1, // email_sent = true
-        new Date().toISOString(), // email_sent_at
-        null, // email_error
-        tokenId
-      );
-      res.redirect(`/admin/motions/${token.motion_id}/tokens?success=Email+sent+successfully`);
-    } else {
-      tokenQueries.updateEmailStatus.run(
-        0, // email_sent = false
-        null, // email_sent_at
-        emailResult.error || 'Unknown error', // email_error
-        tokenId
-      );
-      res.redirect(`/admin/motions/${token.motion_id}/tokens?error=${encodeURIComponent('Failed to send email: ' + emailResult.error)}`);
-    }
+    // Best-effort: kick off processing immediately
+    processPendingTokenEmails({ baseUrl: BASE_URL, limit: 50 }).catch(err => {
+      logger.error('immediate token email processing failed', { tokenId, error: err.message });
+    });
   } catch (err) {
     logger.error('Email resend error:', err);
     const token = tokenQueries.getById.get(tokenId);
     if (token) {
-      res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Failed+to+send+email`);
+      res.redirect(`/admin/motions/${token.motion_id}/tokens?error=Failed+to+queue+email`);
     } else {
       res.status(500).send('Failed to resend email');
     }

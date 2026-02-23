@@ -4,12 +4,16 @@ const {
   markNotificationSent,
   markNotificationFailed,
   ensureResultsEmailNotification,
+  getPendingTokenEmails,
+  markTokenEmailSent,
+  markTokenEmailFailed,
   motionQueries,
+  tokenQueries,
   getMotionStats,
   db
 } = require('../db');
 const { sendResultsEmailForMotion } = require('./resultsEmailService');
-const { sendGenericEmail } = require('../email');
+const { sendGenericEmail, sendVotingLink } = require('../email');
 
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60 * 1000);
@@ -217,7 +221,56 @@ async function processPendingResultsEmails({ baseUrl, limit = 25 } = {}) {
   }
 }
 
+async function processPendingTokenEmails({ baseUrl, limit = 25 } = {}) {
+  const nowIso = new Date().toISOString();
+  const pending = getPendingTokenEmails(nowIso, limit);
+
+  if (pending.length > 0) {
+    logger.info('processing pending token emails', { count: pending.length });
+  }
+
+  for (const outbox of pending) {
+    try {
+      const token = tokenQueries.getById.get(outbox.token_id);
+      if (!token || !token.recipient_email) {
+        markTokenEmailSent(outbox.id);
+        continue;
+      }
+
+      const motion = motionQueries.getById.get(token.motion_id);
+      if (!motion) {
+        markTokenEmailSent(outbox.id);
+        continue;
+      }
+
+      const votingLink = `${baseUrl}/vote/${token.motion_id}?token=${token.token}`;
+      const emailResult = await sendVotingLink(token.recipient_name, token.recipient_email, votingLink, motion);
+
+      if (emailResult.success) {
+        markTokenEmailSent(outbox.id);
+        tokenQueries.updateEmailStatus.run(1, new Date().toISOString(), null, token.id);
+      } else {
+        const nextMinutes = computeBackoffMinutes((outbox.attempts || 0) + 1);
+        const nextAttemptAtIso = addMinutes(new Date(), nextMinutes).toISOString();
+        markTokenEmailFailed(outbox.id, (outbox.attempts || 0) + 1, nextAttemptAtIso, emailResult.error || 'unknown');
+        tokenQueries.updateEmailStatus.run(0, null, emailResult.error || 'queued, will retry', token.id);
+        logger.warn('token email failed, will retry', {
+          outboxId: outbox.id,
+          tokenId: outbox.token_id,
+          nextAttemptAt: nextAttemptAtIso
+        });
+      }
+    } catch (err) {
+      const nextMinutes = computeBackoffMinutes((outbox.attempts || 0) + 1);
+      const nextAttemptAtIso = addMinutes(new Date(), nextMinutes).toISOString();
+      markTokenEmailFailed(outbox.id, (outbox.attempts || 0) + 1, nextAttemptAtIso, err.message);
+      logger.error('token email send error', { outboxId: outbox.id, tokenId: outbox.token_id, error: err.message });
+    }
+  }
+}
+
 module.exports = {
   sweepAndEnqueueCompletedMotions,
-  processPendingResultsEmails
+  processPendingResultsEmails,
+  processPendingTokenEmails
 };
