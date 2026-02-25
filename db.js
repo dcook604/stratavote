@@ -523,6 +523,11 @@ const motionQueries = {
 
   getAll: db.prepare('SELECT * FROM motions ORDER BY created_at DESC'),
 
+  update: db.prepare(`
+    UPDATE motions SET title = ?, description = ?, options_json = ?, open_at = ?, close_at = ?, required_majority = ?
+    WHERE id = ?
+  `),
+
   updateStatus: db.prepare('UPDATE motions SET status = ? WHERE id = ?'),
 
   updateOutcome: db.prepare(`

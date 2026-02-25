@@ -199,6 +199,14 @@
             </form>
           </div>
 
+          <% if (canEdit) { %>
+            <div class="action-form-section">
+              <a href="/admin/motions/<%= motion.id %>/edit" class="btn btn-secondary btn-block">
+                Edit Motion
+              </a>
+            </div>
+          <% } %>
+
           <div class="action-form-section">
             <a href="/admin/motions/<%= motion.id %>/tokens" class="btn btn-secondary btn-block">
               Manage Voter Tokens

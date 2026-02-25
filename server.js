@@ -1062,6 +1062,96 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
   }
 });
 
+// Helper: convert stored UTC ISO string back to local datetime-local value
+function toDatetimeLocalValue(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const offsetMinutesRaw = process.env.APP_TIMEZONE_OFFSET_MINUTES;
+  if (offsetMinutesRaw !== undefined && String(offsetMinutesRaw).trim() !== '') {
+    const offsetMinutes = Number(offsetMinutesRaw);
+    if (!Number.isNaN(offsetMinutes)) {
+      const localMs = date.getTime() + (offsetMinutes * 60 * 1000);
+      const d = new Date(localMs);
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mi = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+    }
+  }
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+// Helper: can the motion still be edited (before voting opens)
+function canEditMotion(motion) {
+  return motion.status === 'Draft' || new Date() < parseMotionDateTime(motion.open_at);
+}
+
+// Edit motion form
+app.get('/admin/motions/:id/edit', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const motion = motionQueries.getById.get(id);
+  if (!motion) return res.status(404).send('Motion not found');
+  if (!canEditMotion(motion)) {
+    return res.redirect(`/admin/motions/${id}?error=Motion+cannot+be+edited+after+voting+opens`);
+  }
+  motion.options = JSON.parse(motion.options_json);
+  res.render('motion_edit', {
+    motion,
+    openAtValue: toDatetimeLocalValue(motion.open_at),
+    closeAtValue: toDatetimeLocalValue(motion.close_at),
+    error: null
+  });
+});
+
+// Edit motion submit
+app.post('/admin/motions/:id/edit', requireAuth, validate(schemas.motion), (req, res) => {
+  const { id } = req.params;
+  const { title, description, options, open_at, close_at, required_majority } = req.body;
+
+  const motion = motionQueries.getById.get(id);
+  if (!motion) return res.status(404).send('Motion not found');
+  if (!canEditMotion(motion)) {
+    return res.redirect(`/admin/motions/${id}?error=Motion+cannot+be+edited+after+voting+opens`);
+  }
+
+  let optionsArray = ['Yes', 'No', 'Abstain'];
+  if (options && options.trim()) {
+    optionsArray = options.split(',').map(opt => opt.trim()).filter(opt => opt);
+  }
+
+  const normalizedOpenAt = parseMotionDateTime(open_at).toISOString();
+  const normalizedCloseAt = parseMotionDateTime(close_at).toISOString();
+
+  try {
+    motionQueries.update.run(
+      title,
+      description,
+      JSON.stringify(optionsArray),
+      normalizedOpenAt,
+      normalizedCloseAt,
+      required_majority || 'Simple',
+      id
+    );
+    res.redirect(`/admin/motions/${id}?success=Motion+updated+successfully`);
+  } catch (err) {
+    logger.error('Motion update error:', err);
+    motion.options = JSON.parse(motion.options_json);
+    res.render('motion_edit', {
+      motion,
+      openAtValue: toDatetimeLocalValue(motion.open_at),
+      closeAtValue: toDatetimeLocalValue(motion.close_at),
+      error: 'Failed to update motion.'
+    });
+  }
+});
+
 // Motion detail
 app.get('/admin/motions/:id', requireAuth, (req, res) => {
   const { id } = req.params;
@@ -1079,6 +1169,7 @@ app.get('/admin/motions/:id', requireAuth, (req, res) => {
     motion,
     stats,
     voterStatus,
+    canEdit: canEditMotion(motion),
     success: req.query.success || null,
     error: req.query.error || null
   });

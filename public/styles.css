@@ -352,7 +352,7 @@ body {
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
   color: var(--color-text);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
   transition: border-color var(--transition), box-shadow var(--transition);
   -webkit-appearance: none;
   appearance: none;

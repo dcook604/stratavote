@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edit Motion - Spectrum 4 Voting System</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <%- include('partials/admin_header') %>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Edit Motion</h1>
+      <a href="/admin/motions/<%= motion.id %>" class="btn btn-secondary">Cancel</a>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error">
+        <%= error %>
+      </div>
+    <% } %>
+
+    <form method="POST" action="/admin/motions/<%= motion.id %>/edit" class="form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+      <div class="form-group">
+        <label for="title">Motion Title *</label>
+        <input type="text" id="title" name="title" required value="<%= motion.title %>">
+      </div>
+
+      <div class="form-group">
+        <label for="description">Description *</label>
+        <textarea id="description" name="description" rows="5" required><%= motion.description %></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="options">Voting Options</label>
+        <input type="text" id="options" name="options" value="<%= motion.options.join(', ') %>">
+        <small>Comma-separated list. Default: Yes, No, Abstain</small>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="open_at">Voting Opens At *</label>
+          <input type="datetime-local" id="open_at" name="open_at" required value="<%= openAtValue %>">
+        </div>
+
+        <div class="form-group">
+          <label for="close_at">Voting Closes At *</label>
+          <input type="datetime-local" id="close_at" name="close_at" required value="<%= closeAtValue %>">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="required_majority">Required Majority *</label>
+        <select id="required_majority" name="required_majority" required>
+          <option value="Simple"     <%= motion.required_majority === 'Simple'     ? 'selected' : '' %>>Simple Majority (> 50%)</option>
+          <option value="TwoThirds" <%= motion.required_majority === 'TwoThirds' ? 'selected' : '' %>>Two-Thirds Majority (≥ 66.67%)</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Save Changes</button>
+    </form>
+  </div>
+</body>
+</html>
