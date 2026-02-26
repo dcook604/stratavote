@@ -131,11 +131,19 @@ body {
 .nav-toggle.open span:nth-child(2) { opacity: 0; }
 .nav-toggle.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
-/* Mobile nav drawer */
+/* Mobile nav drawer — fixed so it appears below the sticky header regardless of scroll position */
 .nav-drawer {
   display: none;
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  z-index: 99;
   background: var(--color-dark-light);
   border-top: 1px solid rgba(255,255,255,0.1);
+  box-shadow: var(--shadow-lg);
+  max-height: calc(100vh - var(--header-height));
+  overflow-y: auto;
 }
 
 .nav-drawer.open {
@@ -467,11 +475,15 @@ select.form-control {
   margin-bottom: 1.5rem;
   gap: 1rem;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .page-header h1 {
   font-size: 1.6rem;
   color: var(--color-dark);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 /* === MOTIONS LIST === */
@@ -599,6 +611,12 @@ select.form-control {
   align-items: start;
 }
 
+/* Prevent grid items from overflowing their container */
+.detail-main,
+.detail-sidebar {
+  min-width: 0;
+}
+
 .detail-row {
   margin-bottom: 1.25rem;
   padding-bottom: 1.25rem;
@@ -618,6 +636,16 @@ select.form-control {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.detail-row p,
+.detail-row code {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+code {
+  word-break: break-all;
 }
 
 /* === VOTE RESULTS / STATS === */
@@ -998,15 +1026,12 @@ select.form-control {
 
   .detail-sidebar {
     order: -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
   }
 
   .detail-sidebar .card {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-
-  .detail-sidebar .card > * {
     margin-bottom: 0;
   }
 }
@@ -1055,10 +1080,12 @@ select.form-control {
 
   .detail-sidebar {
     order: -1;
+    display: block; /* reset the tablet 2-col grid */
   }
 
   .detail-sidebar .card {
     display: block;
+    margin-bottom: 1.25rem;
   }
 
   /* Stats */
