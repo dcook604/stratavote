@@ -20,6 +20,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "overrides": {
+    "cookie": "^1.0.0"
+  },
   "dependencies": {
     "better-sqlite3": "^9.2.2",
     "better-sqlite3-session-store": "^0.1.0",
@@ -34,7 +37,7 @@
     "helmet": "^7.1.0",
     "joi": "^17.11.0",
     "multer": "^2.0.2",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^8.0.1",
     "pdfkit": "^0.14.0",
     "winston": "^3.11.0"
   }
