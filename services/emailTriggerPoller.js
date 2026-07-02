@@ -50,12 +50,34 @@ function issueTokensToCouncil(motion, baseUrl) {
   const emailConfigured = isEmailConfigured();
   const tokenIds = [];
 
+  logger.info('issueTokensToCouncil: starting', {
+    motionId: motion.id,
+    motionTitle: motion.title,
+    totalMembers: allMembers.length,
+    emailConfigured
+  });
+
+  let skippedNoEmail = 0;
+  let skippedDuplicate = 0;
+  let tokensCreated = 0;
+  let emailsEnqueued = 0;
+  let whatsappAttempted = 0;
+
   for (const member of allMembers) {
     const { name, email, whatsapp } = member;
-    if (!email) continue;
+
+    if (!email) {
+      logger.debug('issueTokensToCouncil: skipping member with no email', { name, unit: member.unit_number });
+      skippedNoEmail++;
+      continue;
+    }
 
     const existing = tokenQueries.getActiveByMotionEmail.get(motion.id, email);
-    if (existing) continue;
+    if (existing) {
+      logger.debug('issueTokensToCouncil: token already exists for member', { name, email, motionId: motion.id });
+      skippedDuplicate++;
+      continue;
+    }
 
     const token = crypto.randomBytes(24).toString('base64url');
     const now = new Date().toISOString();
@@ -66,24 +88,48 @@ function issueTokensToCouncil(motion, baseUrl) {
         motion.id, token, name, email, member.unit_number,
         'Active', now, 0, null, null
       );
+      tokensCreated++;
+      logger.debug('issueTokensToCouncil: token created', { name, email, unit: member.unit_number, tokenRowId: result.lastInsertRowid });
     } catch (e) {
-      if (e && e.code === 'SQLITE_CONSTRAINT_UNIQUE') continue;
+      if (e && e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        logger.debug('issueTokensToCouncil: unique constraint, token already exists', { name, email });
+        skippedDuplicate++;
+        continue;
+      }
+      logger.error('issueTokensToCouncil: token creation failed', { name, email, error: e.message });
       throw e;
     }
 
     if (emailConfigured && email) {
       enqueueTokenEmail(result.lastInsertRowid);
       tokenIds.push(result.lastInsertRowid);
+      emailsEnqueued++;
+      logger.debug('issueTokensToCouncil: token email enqueued', { name, email, tokenRowId: result.lastInsertRowid });
+    } else if (!emailConfigured) {
+      logger.debug('issueTokensToCouncil: email not configured, skipping email for member', { name, email });
     }
 
     if (whatsapp) {
+      whatsappAttempted++;
+      logger.info('issueTokensToCouncil: sending WhatsApp voting link', { name, phone: whatsapp, motionId: motion.id });
       sendWhatsApp({ to: whatsapp, token, motionTitle: motion.title, baseUrl }).catch(err => {
-        logger.warn('WhatsApp send failed', { error: err.message, phone: whatsapp });
+        logger.warn('issueTokensToCouncil: WhatsApp send failed', { error: err.message, name, phone: whatsapp, motionId: motion.id });
       });
     }
   }
 
+  logger.info('issueTokensToCouncil: complete', {
+    motionId: motion.id,
+    totalMembers: allMembers.length,
+    tokensCreated,
+    emailsEnqueued,
+    whatsappAttempted,
+    skippedNoEmail,
+    skippedDuplicate
+  });
+
   if (tokenIds.length > 0) {
+    logger.info('issueTokensToCouncil: triggering immediate token email dispatch', { motionId: motion.id, count: tokenIds.length });
     processPendingTokenEmails({ baseUrl, limit: 50 }).catch(err => {
       logger.error('immediate token email processing failed', { motionId: motion.id, error: err.message });
     });
@@ -174,27 +220,32 @@ async function pollOnceInner(baseUrl) {
     for await (const msg of client.fetch(uids, { envelope: true }, { uid: true })) {
       candidates.push({ uid: msg.uid, envelope: msg.envelope });
     }
+    logger.info('Email trigger: envelopes collected', { candidateCount: candidates.length });
 
     // Pass 2: filter and process — each source fetch is a fresh command after the previous stream closed
     for (const { uid, envelope } of candidates) {
       const from = envelope?.from?.[0]?.address?.toLowerCase() ?? '';
+      const subject = envelope?.subject ?? '(no subject)';
       const messageId = envelope?.messageId ?? null;
 
+      logger.info('Email trigger: evaluating message', { uid, from, subject, messageId });
+
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
-        logger.debug('Email trigger: ignoring unauthorized sender', { from });
+        logger.info('Email trigger: ignoring unauthorized sender', { uid, from, authorizedSenders: cfg.authorizedSenders });
         await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         result.skipped++;
         continue;
       }
 
       if (messageId && isEmailAlreadyProcessed(messageId)) {
-        logger.info('Email trigger: skipping already-processed message', { messageId });
+        logger.info('Email trigger: skipping already-processed message', { uid, messageId, from, subject });
         await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         result.skipped++;
         continue;
       }
 
       // Passed all filters — fetch full source for this one message
+      logger.info('Email trigger: fetching full source for message', { uid, from, subject });
       try {
         let source = null;
         for await (const full of client.fetch(uid, { source: true }, { uid: true })) {
@@ -202,6 +253,7 @@ async function pollOnceInner(baseUrl) {
         }
 
         if (!source) {
+          logger.warn('Email trigger: message source was empty', { uid, from, subject });
           await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
           result.skipped++;
           continue;
@@ -212,26 +264,48 @@ async function pollOnceInner(baseUrl) {
         const body = (parsed.text ?? '').trim();
         const deadlineDate = new Date(Date.now() + cfg.defaultDeadlineHours * 3_600_000);
 
+        logger.info('Email trigger: creating motion from email', {
+          uid, from, title,
+          bodyLength: body.length,
+          deadline: deadlineDate.toISOString(),
+          messageId
+        });
+
         const motion = db.transaction(() => {
           const m = createMotionFromEmail({ title, description: body, deadlineDate });
           if (messageId) recordProcessedEmail(messageId, m.id);
           return m;
         })();
 
+        logger.info('Email trigger: motion created', { motionId: motion.id, title, from });
+
         const memberCount = issueTokensToCouncil(motion, baseUrl);
 
         logger.info('Vote created via email trigger', { motionId: motion.id, title, from, members: memberCount });
         result.processed++;
       } catch (err) {
-        logger.error('Failed to process trigger email', { error: err.message, uid });
+        logger.error('Email trigger: failed to process message', {
+          error: err.message,
+          uid,
+          from,
+          subject
+        });
         result.errors++;
       }
 
       await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
     }
+
+    logger.info('Email trigger: poll cycle complete', {
+      unseenCount: result.unseenCount,
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors
+    });
   } finally {
+    logger.info('Email trigger: releasing INBOX lock and logging out');
     lock.release();
-    await client.logout().catch(() => {});
+    await client.logout().catch(err => logger.warn('Email trigger: IMAP logout failed', { error: err.message }));
   }
 
   return result;
@@ -247,8 +321,12 @@ async function pollOnce(baseUrl) {
 function startEmailTriggerPoller(baseUrl) {
   logger.info('Email trigger poller starting (reads IMAP config from DB on each cycle)');
 
-  const run = () =>
-    pollOnce(baseUrl).catch(err => logger.error('Email trigger poll error', { error: err.message }));
+  const run = () => {
+    logger.debug('Email trigger: starting scheduled poll cycle');
+    return pollOnce(baseUrl)
+      .then(r => { if (r) logger.debug('Email trigger: scheduled poll cycle done', r); })
+      .catch(err => logger.error('Email trigger poll error', { error: err.message }));
+  };
 
   // Schedule runs config on every tick so credentials saved via admin UI
   // take effect without a server restart
