@@ -4,17 +4,19 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const crypto = require('crypto');
 const logger = require('../logger');
-const { getSetting, db, generateUUID, generateMotionRef, motionQueries, tokenQueries, enqueueTokenEmail } = require('../db');
+const { getSetting, db, generateUUID, generateMotionRef, motionQueries, tokenQueries, enqueueTokenEmail, isEmailAlreadyProcessed, recordProcessedEmail } = require('../db');
 const { isEmailConfigured } = require('../email');
 const { sendVotingLink: sendWhatsApp } = require('./whatsapp');
 const { processPendingTokenEmails } = require('./notificationWorker');
 
 function getImapConfig() {
+  const security = getSetting('imap_security') || process.env.IMAP_SECURITY || 'ssl';
   return {
     user: getSetting('imap_user') || process.env.IMAP_USER || '',
     password: getSetting('imap_password') || process.env.IMAP_PASSWORD || '',
     host: getSetting('imap_host') || process.env.IMAP_HOST || 'imap.gmail.com',
     port: parseInt(getSetting('imap_port') || process.env.IMAP_PORT || '993', 10),
+    secure: security !== 'starttls',
     authorizedSenders: (getSetting('imap_authorized_senders') || process.env.IMAP_AUTHORIZED_SENDERS || '')
       .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
     pollIntervalMs: parseInt(getSetting('imap_poll_interval_ms') || process.env.IMAP_POLL_INTERVAL_MS || '60000', 10),
@@ -76,7 +78,7 @@ function issueTokensToCouncil(motion, baseUrl) {
 
     if (whatsapp) {
       sendWhatsApp({ to: whatsapp, token, motionTitle: motion.title, baseUrl }).catch(err => {
-        logger.warn({ err, phone: whatsapp }, 'WhatsApp send failed');
+        logger.warn('WhatsApp send failed', { error: err.message, phone: whatsapp });
       });
     }
   }
@@ -100,7 +102,7 @@ async function pollOnce(baseUrl) {
   const client = new ImapFlow({
     host: cfg.host,
     port: cfg.port,
-    secure: true,
+    secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.password },
     logger: false
   });
@@ -110,7 +112,7 @@ async function pollOnce(baseUrl) {
     await client.connect();
     lock = await client.getMailboxLock('INBOX');
   } catch (err) {
-    logger.error({ err }, 'Email trigger: IMAP connect/lock failed');
+    logger.error('Email trigger: IMAP connect/lock failed', { error: err.message });
     await client.logout().catch(() => {});
     return { connected: false, reason: err.message };
   }
@@ -127,7 +129,16 @@ async function pollOnce(baseUrl) {
       const from = msg.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
 
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
-        logger.debug({ from }, 'Email trigger: ignoring unauthorized sender');
+        logger.debug('Email trigger: ignoring unauthorized sender', { from });
+        await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+        result.skipped++;
+        continue;
+      }
+
+      const messageId = msg.envelope?.messageId ?? null;
+
+      if (messageId && isEmailAlreadyProcessed(messageId)) {
+        logger.info('Email trigger: skipping already-processed message', { messageId });
         await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
         result.skipped++;
         continue;
@@ -146,13 +157,18 @@ async function pollOnce(baseUrl) {
         const body = (parsed.text ?? '').trim();
         const deadlineDate = new Date(Date.now() + cfg.defaultDeadlineHours * 3_600_000);
 
-        const motion = createMotionFromEmail({ title, description: body, deadlineDate });
+        const motion = db.transaction(() => {
+          const m = createMotionFromEmail({ title, description: body, deadlineDate });
+          if (messageId) recordProcessedEmail(messageId, m.id);
+          return m;
+        })();
+
         const memberCount = issueTokensToCouncil(motion, baseUrl);
 
-        logger.info({ motionId: motion.id, title, from, members: memberCount }, 'Vote created via email trigger');
+        logger.info('Vote created via email trigger', { motionId: motion.id, title, from, members: memberCount });
         result.processed++;
       } catch (err) {
-        logger.error({ err, uid: msg.uid }, 'Failed to process trigger email');
+        logger.error('Failed to process trigger email', { error: err.message, uid: msg.uid });
         result.errors++;
       }
 
@@ -170,7 +186,7 @@ function startEmailTriggerPoller(baseUrl) {
   logger.info('Email trigger poller starting (reads IMAP config from DB on each cycle)');
 
   const run = () =>
-    pollOnce(baseUrl).catch(err => logger.error({ err }, 'Email trigger poll error'));
+    pollOnce(baseUrl).catch(err => logger.error('Email trigger poll error', { error: err.message }));
 
   // Schedule runs config on every tick so credentials saved via admin UI
   // take effect without a server restart

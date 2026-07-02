@@ -1689,6 +1689,7 @@ app.get('/admin/settings', requireAuth, (req, res) => {
     property_manager_email,
     imap_host: getSetting('imap_host') || process.env.IMAP_HOST || '',
     imap_port: getSetting('imap_port') || process.env.IMAP_PORT || '993',
+    imap_security: getSetting('imap_security') || process.env.IMAP_SECURITY || 'ssl',
     imap_user: getSetting('imap_user') || process.env.IMAP_USER || '',
     imap_password_set: !!(getSetting('imap_password') || process.env.IMAP_PASSWORD),
     imap_authorized_senders: getSetting('imap_authorized_senders') || process.env.IMAP_AUTHORIZED_SENDERS || '',
@@ -1707,6 +1708,7 @@ function getSettingsData() {
     dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
     imap_host: getSetting('imap_host') || process.env.IMAP_HOST || '',
     imap_port: getSetting('imap_port') || process.env.IMAP_PORT || '993',
+    imap_security: getSetting('imap_security') || process.env.IMAP_SECURITY || 'ssl',
     imap_user: getSetting('imap_user') || process.env.IMAP_USER || '',
     imap_password_set: !!(getSetting('imap_password') || process.env.IMAP_PASSWORD),
     imap_authorized_senders: getSetting('imap_authorized_senders') || process.env.IMAP_AUTHORIZED_SENDERS || '',
@@ -1861,7 +1863,7 @@ app.post('/admin/settings/test-email-trigger', requireAuth, async (req, res) => 
     const msg = `Connected. Unseen emails: ${result.unseenCount}. Created ${result.processed} vote(s), skipped ${result.skipped}, errors: ${result.errors}.`;
     return renderAdminSettings(req, res, { success: msg });
   } catch (err) {
-    logger.error('Email trigger test error:', err);
+    logger.error('Email trigger test error', { error: err.message });
     return renderAdminSettings(req, res, { error: `Poll error: ${err.message}` });
   }
 });
@@ -1869,13 +1871,14 @@ app.post('/admin/settings/test-email-trigger', requireAuth, async (req, res) => 
 // Save email trigger (IMAP) settings
 app.post('/admin/settings/email-trigger', requireAuth, (req, res) => {
   const {
-    imap_host, imap_port, imap_user, imap_password,
+    imap_host, imap_port, imap_security, imap_user, imap_password,
     imap_authorized_senders, imap_poll_interval_ms, imap_default_deadline_hours
   } = req.body;
 
   try {
     if (imap_host !== undefined) setSetting('imap_host', imap_host.trim());
     if (imap_port !== undefined) setSetting('imap_port', imap_port.trim());
+    if (imap_security === 'ssl' || imap_security === 'starttls') setSetting('imap_security', imap_security);
     if (imap_user !== undefined) setSetting('imap_user', imap_user.trim());
     if (imap_password && imap_password.trim()) setSetting('imap_password', imap_password.trim());
     if (imap_authorized_senders !== undefined) setSetting('imap_authorized_senders', imap_authorized_senders.trim());

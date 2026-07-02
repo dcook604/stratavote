@@ -186,6 +186,18 @@ async function processPendingResultsEmails({ baseUrl, limit = 25 } = {}) {
         continue;
       }
 
+      // Terminal reasons — motion is gone, no point retrying
+      const terminalReasons = new Set(['motion_not_found', 'results_emails_disabled']);
+      if (terminalReasons.has(result.reason)) {
+        markNotificationSent(notif.id);
+        logger.warn('results email permanently skipped', {
+          motionId: notif.motion_id,
+          notificationId: notif.id,
+          reason: result.reason
+        });
+        continue;
+      }
+
       // Skipped/failed -> keep retry path
       const nextMinutes = computeBackoffMinutes((notif.attempts || 0) + 1);
       const nextAttemptAtIso = addMinutes(new Date(), nextMinutes).toISOString();

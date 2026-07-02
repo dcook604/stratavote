@@ -492,6 +492,14 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_token_email_outbox_next_attempt ON token_email_outbox(next_attempt_at);
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS email_trigger_log (
+      message_id TEXT PRIMARY KEY,
+      motion_id TEXT NOT NULL,
+      processed_at TEXT NOT NULL
+    );
+  `);
+
   // Initialize admin password if not exists
   const adminSettings = db.prepare('SELECT * FROM admin_settings WHERE id = 1').get();
   if (!adminSettings && process.env.ADMIN_PASSWORD) {
@@ -844,6 +852,15 @@ function markNotificationFailed(notificationId, attempts, nextAttemptAtIso, last
   return motionNotificationQueries.markFailed.run(attempts, nextAttemptAtIso, lastError, notificationId);
 }
 
+function isEmailAlreadyProcessed(messageId) {
+  return !!db.prepare('SELECT 1 FROM email_trigger_log WHERE message_id = ?').get(messageId);
+}
+
+function recordProcessedEmail(messageId, motionId) {
+  db.prepare('INSERT OR IGNORE INTO email_trigger_log (message_id, motion_id, processed_at) VALUES (?, ?, ?)')
+    .run(messageId, motionId, new Date().toISOString());
+}
+
 module.exports = {
   db,
   motionQueries,
@@ -870,5 +887,7 @@ module.exports = {
   enqueueTokenEmail,
   getPendingTokenEmails,
   markTokenEmailSent,
-  markTokenEmailFailed
+  markTokenEmailFailed,
+  isEmailAlreadyProcessed,
+  recordProcessedEmail
 };

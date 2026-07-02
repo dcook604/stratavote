@@ -99,6 +99,14 @@
         </div>
 
         <div class="form-group">
+          <label for="imap_security">Security Type</label>
+          <select id="imap_security" name="imap_security">
+            <option value="ssl" <%= (imap_security || 'ssl') === 'ssl' ? 'selected' : '' %>>SSL/TLS (port 993)</option>
+            <option value="starttls" <%= imap_security === 'starttls' ? 'selected' : '' %>>STARTTLS (port 143)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label for="imap_user">IMAP Username / Email</label>
           <input type="email" id="imap_user" name="imap_user" value="<%= imap_user || '' %>" placeholder="votes@example.com">
         </div>
