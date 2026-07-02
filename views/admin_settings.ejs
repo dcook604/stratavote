@@ -130,6 +130,12 @@
 
         <button type="submit" class="btn btn-primary">Save Email Trigger Settings</button>
       </form>
+
+      <form method="POST" action="/admin/settings/test-email-trigger" class="form" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border, #e5e7eb);">
+        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+        <button type="submit" class="btn btn-secondary">Test Polling Now</button>
+        <small class="form-help" style="display: block; margin-top: 0.4rem;">Runs one poll cycle immediately and reports how many unseen emails were found and processed.</small>
+      </form>
     </div>
 
     <div class="card">

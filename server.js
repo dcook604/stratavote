@@ -38,7 +38,7 @@ const {
 const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
 const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
 const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
-const { startEmailTriggerPoller } = require('./services/emailTriggerPoller');
+const { startEmailTriggerPoller, pollOnce: emailTriggerPollOnce } = require('./services/emailTriggerPoller');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -1848,6 +1848,21 @@ app.post('/admin/settings/test-email', requireAuth, async (req, res) => {
   } catch (err) {
     logger.error('Email test error:', err);
     return renderAdminSettings(req, res, { error: `Email test error: ${err.message}` });
+  }
+});
+
+// Test email trigger polling (runs one cycle immediately)
+app.post('/admin/settings/test-email-trigger', requireAuth, async (req, res) => {
+  try {
+    const result = await emailTriggerPollOnce(getBaseUrl(req));
+    if (!result.connected) {
+      return renderAdminSettings(req, res, { error: `IMAP connection failed: ${result.reason}` });
+    }
+    const msg = `Connected. Unseen emails: ${result.unseenCount}. Created ${result.processed} vote(s), skipped ${result.skipped}, errors: ${result.errors}.`;
+    return renderAdminSettings(req, res, { success: msg });
+  } catch (err) {
+    logger.error('Email trigger test error:', err);
+    return renderAdminSettings(req, res, { error: `Poll error: ${err.message}` });
   }
 });
 

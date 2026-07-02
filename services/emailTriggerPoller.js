@@ -90,9 +90,12 @@ function issueTokensToCouncil(motion, baseUrl) {
   return allMembers.length;
 }
 
+// Returns { connected, unseenCount, processed, skipped, errors }
 async function pollOnce(baseUrl) {
   const cfg = getImapConfig();
-  if (!cfg.user || !cfg.password) return;
+  if (!cfg.user || !cfg.password) {
+    return { connected: false, reason: 'IMAP credentials not configured' };
+  }
 
   const client = new ImapFlow({
     host: cfg.host,
@@ -109,13 +112,16 @@ async function pollOnce(baseUrl) {
   } catch (err) {
     logger.error({ err }, 'Email trigger: IMAP connect/lock failed');
     await client.logout().catch(() => {});
-    return;
+    return { connected: false, reason: err.message };
   }
 
+  const result = { connected: true, unseenCount: 0, processed: 0, skipped: 0, errors: 0 };
+
   try {
-    // Use UIDs throughout so sequence-number shifts don't cause mismatches
     const uids = await client.search({ seen: false }, { uid: true });
-    if (!uids || uids.length === 0) return;
+    if (!uids || uids.length === 0) return result;
+
+    result.unseenCount = uids.length;
 
     for await (const msg of client.fetch(uids, { envelope: true, source: true }, { uid: true })) {
       const from = msg.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
@@ -123,6 +129,7 @@ async function pollOnce(baseUrl) {
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
         logger.debug({ from }, 'Email trigger: ignoring unauthorized sender');
         await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+        result.skipped++;
         continue;
       }
 
@@ -130,6 +137,7 @@ async function pollOnce(baseUrl) {
         const source = msg.source;
         if (!source) {
           await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+          result.skipped++;
           continue;
         }
 
@@ -142,8 +150,10 @@ async function pollOnce(baseUrl) {
         const memberCount = issueTokensToCouncil(motion, baseUrl);
 
         logger.info({ motionId: motion.id, title, from, members: memberCount }, 'Vote created via email trigger');
+        result.processed++;
       } catch (err) {
         logger.error({ err, uid: msg.uid }, 'Failed to process trigger email');
+        result.errors++;
       }
 
       await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
@@ -152,6 +162,8 @@ async function pollOnce(baseUrl) {
     lock.release();
     await client.logout().catch(() => {});
   }
+
+  return result;
 }
 
 function startEmailTriggerPoller(baseUrl) {
@@ -170,4 +182,4 @@ function startEmailTriggerPoller(baseUrl) {
   run().then(schedule).catch(schedule);
 }
 
-module.exports = { startEmailTriggerPoller };
+module.exports = { startEmailTriggerPoller, pollOnce };
