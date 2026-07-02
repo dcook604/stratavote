@@ -99,21 +99,46 @@ async function pollOnce(baseUrl) {
     return { connected: false, reason: 'IMAP credentials not configured' };
   }
 
+  const imapLogger = {
+    debug: (obj) => logger.debug('IMAP', obj),
+    info:  (obj) => logger.debug('IMAP', obj),
+    warn:  (obj) => logger.warn('IMAP', obj),
+    error: (obj) => logger.error('IMAP', obj)
+  };
+
   const client = new ImapFlow({
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.password },
-    logger: false
+    logger: imapLogger,
+    tls: { rejectUnauthorized: true }
   });
 
   let lock;
+
   try {
     await client.connect();
+  } catch (err) {
+    const detail = err.response || err.responseText || err.serverResponseCode || err.code || '';
+    logger.error('Email trigger: IMAP connection failed', {
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      error: err.message,
+      detail,
+      code: err.code || ''
+    });
+    await client.logout().catch(() => {});
+    const reason = detail ? `${err.message}: ${detail}` : err.message;
+    return { connected: false, reason };
+  }
+
+  try {
     lock = await client.getMailboxLock('INBOX');
   } catch (err) {
     const detail = err.response || err.responseText || err.serverResponseCode || '';
-    logger.error('Email trigger: IMAP connect/lock failed', {
+    logger.error('Email trigger: IMAP mailbox lock failed', {
       error: err.message,
       detail,
       responseStatus: err.responseStatus || ''
