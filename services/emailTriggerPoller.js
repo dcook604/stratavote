@@ -112,9 +112,15 @@ async function pollOnce(baseUrl) {
     await client.connect();
     lock = await client.getMailboxLock('INBOX');
   } catch (err) {
-    logger.error('Email trigger: IMAP connect/lock failed', { error: err.message });
+    const detail = err.response || err.responseText || err.serverResponseCode || '';
+    logger.error('Email trigger: IMAP connect/lock failed', {
+      error: err.message,
+      detail,
+      responseStatus: err.responseStatus || ''
+    });
     await client.logout().catch(() => {});
-    return { connected: false, reason: err.message };
+    const reason = detail ? `${err.message}: ${detail}` : err.message;
+    return { connected: false, reason };
   }
 
   const result = { connected: true, unseenCount: 0, processed: 0, skipped: 0, errors: 0 };
