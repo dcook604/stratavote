@@ -160,15 +160,19 @@ async function pollOnceInner(baseUrl) {
   const result = { connected: true, unseenCount: 0, processed: 0, skipped: 0, errors: 0 };
 
   try {
-    logger.info('Email trigger: searching for unseen messages');
-    const uids = await client.search({ seen: false }, { uid: true });
+    // Only look at emails from the last 7 days to avoid scanning a huge inbox
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    logger.info('Email trigger: searching for unseen messages', { since: since.toISOString() });
+    const uids = await client.search({ seen: false, since }, { uid: true });
     logger.info('Email trigger: search complete', { unseenCount: uids ? uids.length : 0 });
     if (!uids || uids.length === 0) return result;
 
     result.unseenCount = uids.length;
 
-    for await (const msg of client.fetch(uids, { envelope: true, source: true }, { uid: true })) {
+    // Fetch envelopes only first — no body download yet
+    for await (const msg of client.fetch(uids, { envelope: true }, { uid: true })) {
       const from = msg.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
+      const messageId = msg.envelope?.messageId ?? null;
 
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
         logger.debug('Email trigger: ignoring unauthorized sender', { from });
@@ -177,8 +181,6 @@ async function pollOnceInner(baseUrl) {
         continue;
       }
 
-      const messageId = msg.envelope?.messageId ?? null;
-
       if (messageId && isEmailAlreadyProcessed(messageId)) {
         logger.info('Email trigger: skipping already-processed message', { messageId });
         await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
@@ -186,8 +188,13 @@ async function pollOnceInner(baseUrl) {
         continue;
       }
 
+      // Passed all filters — now fetch the full source for this one message
       try {
-        const source = msg.source;
+        let source = null;
+        for await (const full of client.fetch([msg.uid], { source: true }, { uid: true })) {
+          source = full.source;
+        }
+
         if (!source) {
           await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
           result.skipped++;
