@@ -92,8 +92,10 @@ function issueTokensToCouncil(motion, baseUrl) {
   return allMembers.length;
 }
 
+const POLL_TIMEOUT_MS = 60000;
+
 // Returns { connected, unseenCount, processed, skipped, errors }
-async function pollOnce(baseUrl) {
+async function pollOnceInner(baseUrl) {
   const cfg = getImapConfig();
   if (!cfg.user || !cfg.password) {
     return { connected: false, reason: 'IMAP credentials not configured' };
@@ -112,13 +114,18 @@ async function pollOnce(baseUrl) {
     secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.password },
     logger: imapLogger,
-    tls: { rejectUnauthorized: true }
+    tls: { rejectUnauthorized: true },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000
   });
 
   let lock;
 
   try {
+    logger.info('Email trigger: connecting to IMAP', { host: cfg.host, port: cfg.port, secure: cfg.secure });
     await client.connect();
+    logger.info('Email trigger: IMAP connected');
   } catch (err) {
     const detail = err.response || err.responseText || err.serverResponseCode || err.code || '';
     logger.error('Email trigger: IMAP connection failed', {
@@ -135,7 +142,9 @@ async function pollOnce(baseUrl) {
   }
 
   try {
+    logger.info('Email trigger: acquiring INBOX lock');
     lock = await client.getMailboxLock('INBOX');
+    logger.info('Email trigger: INBOX lock acquired');
   } catch (err) {
     const detail = err.response || err.responseText || err.serverResponseCode || '';
     logger.error('Email trigger: IMAP mailbox lock failed', {
@@ -151,7 +160,9 @@ async function pollOnce(baseUrl) {
   const result = { connected: true, unseenCount: 0, processed: 0, skipped: 0, errors: 0 };
 
   try {
+    logger.info('Email trigger: searching for unseen messages');
     const uids = await client.search({ seen: false }, { uid: true });
+    logger.info('Email trigger: search complete', { unseenCount: uids ? uids.length : 0 });
     if (!uids || uids.length === 0) return result;
 
     result.unseenCount = uids.length;
@@ -211,6 +222,13 @@ async function pollOnce(baseUrl) {
   }
 
   return result;
+}
+
+async function pollOnce(baseUrl) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`IMAP poll timed out after ${POLL_TIMEOUT_MS / 1000}s`)), POLL_TIMEOUT_MS)
+  );
+  return Promise.race([pollOnceInner(baseUrl), timeout]);
 }
 
 function startEmailTriggerPoller(baseUrl) {
