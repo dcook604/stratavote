@@ -141,7 +141,8 @@ const schemas = {
   councilMember: Joi.object({
     name: Joi.string().min(2).max(100).required(),
     email: Joi.string().email().max(200).required(),
-    unit_number: Joi.string().max(50).allow('').optional()
+    unit_number: Joi.string().max(50).allow('').optional(),
+    whatsapp: Joi.string().max(30).allow('').optional()
   })
 };
 

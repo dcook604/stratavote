@@ -13,10 +13,40 @@ function closeEditModal() {
   document.body.style.overflow = '';
 }
 
-window.addEventListener('click', function(e) {
-  if (e.target === document.getElementById('editModal')) closeEditModal();
-});
+document.addEventListener('DOMContentLoaded', function () {
+  // Edit buttons
+  document.querySelectorAll('.js-edit-member').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      openEditModal(
+        btn.dataset.id,
+        btn.dataset.name,
+        btn.dataset.email,
+        btn.dataset.unit,
+        btn.dataset.whatsapp
+      );
+    });
+  });
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeEditModal();
+  // Delete forms — confirm before submitting
+  document.querySelectorAll('.js-delete-member-form').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      if (!confirm('Delete this council member? This will not affect existing tokens.')) {
+        e.preventDefault();
+      }
+    });
+  });
+
+  // Close modal on backdrop click
+  document.getElementById('editModal').addEventListener('click', function (e) {
+    if (e.target === this) closeEditModal();
+  });
+
+  // Close modal on Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeEditModal();
+  });
+
+  // Close button inside modal
+  var closeBtn = document.querySelector('.modal-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeEditModal);
 });

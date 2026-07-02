@@ -151,8 +151,15 @@
                   <td><%= member.whatsapp || '-' %></td>
                   <td>
                     <div style="display: flex; gap: 0.4rem;">
-                      <button onclick="openEditModal(<%= member.id %>, '<%= member.name.replace(/'/g, "\\'") %>', '<%= member.email %>', '<%= member.unit_number || '' %>', '<%= (member.whatsapp || '').replace(/'/g, "\\'") %>')" class="btn btn-sm btn-secondary">Edit</button>
-                      <form method="POST" action="/admin/council/<%= member.id %>/delete" style="display: inline;" onsubmit="return confirm('Delete this council member? This will not affect existing tokens.')">
+                      <button
+                        class="btn btn-sm btn-secondary js-edit-member"
+                        data-id="<%= member.id %>"
+                        data-name="<%- member.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                        data-email="<%- member.email.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                        data-unit="<%- (member.unit_number || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                        data-whatsapp="<%- (member.whatsapp || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                      >Edit</button>
+                      <form method="POST" action="/admin/council/<%= member.id %>/delete" style="display: inline;" class="js-delete-member-form">
                         <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
                         <button type="submit" class="btn btn-sm btn-danger">Delete</button>
                       </form>
@@ -173,8 +180,15 @@
                 <%= member.email %><% if (member.unit_number) { %> &middot; Unit <%= member.unit_number %><% } %><% if (member.whatsapp) { %> &middot; WhatsApp <%= member.whatsapp %><% } %>
               </div>
               <div style="display: flex; gap: 0.4rem;">
-                <button onclick="openEditModal(<%= member.id %>, '<%= member.name.replace(/'/g, "\\'") %>', '<%= member.email %>', '<%= member.unit_number || '' %>', '<%= (member.whatsapp || '').replace(/'/g, "\\'") %>')" class="btn btn-sm btn-secondary">Edit</button>
-                <form method="POST" action="/admin/council/<%= member.id %>/delete" onsubmit="return confirm('Delete this council member? This will not affect existing tokens.')">
+                <button
+                  class="btn btn-sm btn-secondary js-edit-member"
+                  data-id="<%= member.id %>"
+                  data-name="<%- member.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                  data-email="<%- member.email.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                  data-unit="<%- (member.unit_number || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                  data-whatsapp="<%- (member.whatsapp || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                >Edit</button>
+                <form method="POST" action="/admin/council/<%= member.id %>/delete" class="js-delete-member-form">
                   <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
                   <button type="submit" class="btn btn-sm btn-danger">Delete</button>
                 </form>
