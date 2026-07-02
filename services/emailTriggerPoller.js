@@ -4,8 +4,8 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const crypto = require('crypto');
 const logger = require('../logger');
-const { getSetting, db, generateUUID, generateMotionRef, councilQueries, motionQueries, tokenQueries, enqueueTokenEmail } = require('../db');
-const { isEmailConfigured, sendVotingLink } = require('../email');
+const { getSetting, db, generateUUID, generateMotionRef, motionQueries, tokenQueries, enqueueTokenEmail } = require('../db');
+const { isEmailConfigured } = require('../email');
 const { sendVotingLink: sendWhatsApp } = require('./whatsapp');
 const { processPendingTokenEmails } = require('./notificationWorker');
 
@@ -22,12 +22,10 @@ function getImapConfig() {
   };
 }
 
-async function createMotionFromEmail({ title, description, deadlineDate }) {
+function createMotionFromEmail({ title, description, deadlineDate }) {
   const motionId = generateUUID();
   const motionRef = generateMotionRef();
   const now = new Date().toISOString();
-  const openAt = now;
-  const closeAt = deadlineDate.toISOString();
 
   motionQueries.create.run(
     motionId,
@@ -35,21 +33,18 @@ async function createMotionFromEmail({ title, description, deadlineDate }) {
     title,
     description || title,
     JSON.stringify(['Yes', 'No', 'Abstain']),
-    openAt,
-    closeAt,
+    now,
+    deadlineDate.toISOString(),
     'Open',
     'Simple',
     now
   );
 
-  return { id: motionId, title, description, open_at: openAt, close_at: closeAt };
+  return { id: motionId, title, description };
 }
 
-async function issueTokensToCouncil(motion, baseUrl) {
-  const members = councilQueries.getAll.get ? [councilQueries.getAll.get()] : councilQueries.getAll.all();
-  // councilQueries.getAll returns all rows
+function issueTokensToCouncil(motion, baseUrl) {
   const allMembers = db.prepare('SELECT * FROM council_members ORDER BY name ASC').all();
-
   const emailConfigured = isEmailConfigured();
   const tokenIds = [];
 
@@ -57,7 +52,6 @@ async function issueTokensToCouncil(motion, baseUrl) {
     const { name, email, whatsapp } = member;
     if (!email) continue;
 
-    // Skip duplicates
     const existing = tokenQueries.getActiveByMotionEmail.get(motion.id, email);
     if (existing) continue;
 
@@ -67,16 +61,8 @@ async function issueTokensToCouncil(motion, baseUrl) {
     let result;
     try {
       result = tokenQueries.create.run(
-        motion.id,
-        token,
-        name,
-        email,
-        member.unit_number,
-        'Active',
-        now,
-        0,
-        null,
-        null
+        motion.id, token, name, email, member.unit_number,
+        'Active', now, 0, null, null
       );
     } catch (e) {
       if (e && e.code === 'SQLITE_CONSTRAINT_UNIQUE') continue;
@@ -88,10 +74,9 @@ async function issueTokensToCouncil(motion, baseUrl) {
       tokenIds.push(result.lastInsertRowid);
     }
 
-    // Best-effort WhatsApp
     if (whatsapp) {
       sendWhatsApp({ to: whatsapp, token, motionTitle: motion.title, baseUrl }).catch(err => {
-        logger.warn({ err, phone: whatsapp }, 'WhatsApp send failed; email was sent');
+        logger.warn({ err, phone: whatsapp }, 'WhatsApp send failed');
       });
     }
   }
@@ -117,26 +102,34 @@ async function pollOnce(baseUrl) {
     logger: false
   });
 
-  await client.connect();
-  const lock = await client.getMailboxLock('INBOX');
+  let lock;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock('INBOX');
+  } catch (err) {
+    logger.error({ err }, 'Email trigger: IMAP connect/lock failed');
+    await client.logout().catch(() => {});
+    return;
+  }
 
   try {
-    const uids = await client.search({ seen: false });
-    if (!uids || !Array.isArray(uids) || uids.length === 0) return;
+    // Use UIDs throughout so sequence-number shifts don't cause mismatches
+    const uids = await client.search({ seen: false }, { uid: true });
+    if (!uids || uids.length === 0) return;
 
-    for await (const msg of client.fetch(uids, { envelope: true, source: true })) {
+    for await (const msg of client.fetch(uids, { envelope: true, source: true }, { uid: true })) {
       const from = msg.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
 
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
         logger.debug({ from }, 'Email trigger: ignoring unauthorized sender');
-        await client.messageFlagsAdd(String(msg.uid), ['\\Seen'], { uid: true });
+        await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
         continue;
       }
 
       try {
         const source = msg.source;
         if (!source) {
-          await client.messageFlagsAdd(String(msg.uid), ['\\Seen'], { uid: true });
+          await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
           continue;
         }
 
@@ -145,18 +138,15 @@ async function pollOnce(baseUrl) {
         const body = (parsed.text ?? '').trim();
         const deadlineDate = new Date(Date.now() + cfg.defaultDeadlineHours * 3_600_000);
 
-        const motion = await createMotionFromEmail({ title, description: body, deadlineDate });
-        const memberCount = await issueTokensToCouncil(motion, baseUrl);
+        const motion = createMotionFromEmail({ title, description: body, deadlineDate });
+        const memberCount = issueTokensToCouncil(motion, baseUrl);
 
-        logger.info(
-          { motionId: motion.id, title, from, members: memberCount },
-          'Vote created via email trigger'
-        );
+        logger.info({ motionId: motion.id, title, from, members: memberCount }, 'Vote created via email trigger');
       } catch (err) {
         logger.error({ err, uid: msg.uid }, 'Failed to process trigger email');
       }
 
-      await client.messageFlagsAdd(String(msg.uid), ['\\Seen'], { uid: true });
+      await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
     }
   } finally {
     lock.release();
@@ -165,27 +155,19 @@ async function pollOnce(baseUrl) {
 }
 
 function startEmailTriggerPoller(baseUrl) {
-  const cfg = getImapConfig();
-  if (!cfg.user || !cfg.password) {
-    logger.info('Email trigger poller disabled (IMAP credentials not configured)');
-    return;
-  }
-
-  logger.info('Email trigger poller started');
+  logger.info('Email trigger poller starting (reads IMAP config from DB on each cycle)');
 
   const run = () =>
     pollOnce(baseUrl).catch(err => logger.error({ err }, 'Email trigger poll error'));
 
-  run();
-
+  // Schedule runs config on every tick so credentials saved via admin UI
+  // take effect without a server restart
   const schedule = () => {
     const interval = getImapConfig().pollIntervalMs;
-    setTimeout(() => {
-      run().then(schedule).catch(schedule);
-    }, interval);
+    setTimeout(() => run().then(schedule).catch(schedule), interval);
   };
 
-  schedule();
+  run().then(schedule).catch(schedule);
 }
 
 module.exports = { startEmailTriggerPoller };
