@@ -74,10 +74,90 @@
     <div class="card">
       <h2>Email Configuration</h2>
       <p class="text-muted">Test the email configuration for sending voting links.</p>
-      
+
       <form method="POST" action="/admin/settings/test-email" class="form">
         <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
         <button type="submit" class="btn btn-secondary">Test Email Configuration</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Email Trigger (IMAP Inbox)</h2>
+      <p class="text-muted">When configured, an authorized sender can create a new vote by emailing this inbox. The email subject becomes the motion title and the body becomes the description. Voting links are sent automatically to all council members.</p>
+
+      <form method="POST" action="/admin/settings/email-trigger" class="form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+
+        <div class="form-group">
+          <label for="imap_host">IMAP Host</label>
+          <input type="text" id="imap_host" name="imap_host" value="<%= imap_host || '' %>" placeholder="imap.gmail.com">
+        </div>
+
+        <div class="form-group">
+          <label for="imap_port">IMAP Port</label>
+          <input type="number" id="imap_port" name="imap_port" value="<%= imap_port || '993' %>" placeholder="993">
+        </div>
+
+        <div class="form-group">
+          <label for="imap_user">IMAP Username / Email</label>
+          <input type="email" id="imap_user" name="imap_user" value="<%= imap_user || '' %>" placeholder="votes@example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="imap_password">IMAP Password / App Password</label>
+          <input type="password" id="imap_password" name="imap_password" placeholder="<%= imap_password_set ? '(saved — leave blank to keep)' : 'Enter password' %>">
+          <% if (imap_password_set) { %>
+            <small class="form-help">A password is currently saved. Leave blank to keep it.</small>
+          <% } %>
+        </div>
+
+        <div class="form-group">
+          <label for="imap_authorized_senders">Authorized Senders (comma-separated emails)</label>
+          <input type="text" id="imap_authorized_senders" name="imap_authorized_senders" value="<%= imap_authorized_senders || '' %>" placeholder="manager@example.com, president@example.com">
+          <small class="form-help">Only emails from these addresses will create votes. Leave empty to allow any sender.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="imap_default_deadline_hours">Default Voting Window (hours)</label>
+          <input type="number" id="imap_default_deadline_hours" name="imap_default_deadline_hours" value="<%= imap_default_deadline_hours || '48' %>" min="1" max="720">
+        </div>
+
+        <div class="form-group">
+          <label for="imap_poll_interval_ms">Poll Interval (milliseconds)</label>
+          <input type="number" id="imap_poll_interval_ms" name="imap_poll_interval_ms" value="<%= imap_poll_interval_ms || '60000' %>" min="10000">
+          <small class="form-help">How often to check the inbox. Default: 60000 (1 minute). Requires server restart to take effect on a running instance.</small>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Email Trigger Settings</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>WhatsApp Notifications (OpenWA)</h2>
+      <p class="text-muted">When configured, council members with a WhatsApp number on their profile will receive voting links via WhatsApp in addition to email.</p>
+
+      <form method="POST" action="/admin/settings/whatsapp" class="form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+
+        <div class="form-group">
+          <label for="openwa_url">OpenWA Server URL</label>
+          <input type="text" id="openwa_url" name="openwa_url" value="<%= openwa_url || '' %>" placeholder="https://openwa.example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="openwa_api_key">OpenWA API Key</label>
+          <input type="password" id="openwa_api_key" name="openwa_api_key" placeholder="<%= openwa_api_key_set ? '(saved — leave blank to keep)' : 'Enter API key' %>">
+          <% if (openwa_api_key_set) { %>
+            <small class="form-help">An API key is currently saved. Leave blank to keep it.</small>
+          <% } %>
+        </div>
+
+        <div class="form-group">
+          <label for="openwa_session_id">OpenWA Session ID</label>
+          <input type="text" id="openwa_session_id" name="openwa_session_id" value="<%= openwa_session_id || '' %>" placeholder="default">
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save WhatsApp Settings</button>
       </form>
     </div>
 

@@ -433,6 +433,13 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_council_members_unit ON council_members(unit_number);
   `);
 
+  // Add whatsapp column to council_members if it doesn't exist (migration)
+  try {
+    db.exec(`ALTER TABLE council_members ADD COLUMN whatsapp TEXT NULL`);
+  } catch (e) {
+    // Column already exists — ignore
+  }
+
   // Admin settings table for password storage
   db.exec(`
     CREATE TABLE IF NOT EXISTS admin_settings (
@@ -626,14 +633,14 @@ const ballotQueries = {
 // Prepared statements for council members
 const councilQueries = {
   create: db.prepare(`
-    INSERT INTO council_members (name, email, unit_number, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO council_members (name, email, unit_number, whatsapp, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `),
   getById: db.prepare('SELECT * FROM council_members WHERE id = ?'),
   getAll: db.prepare('SELECT * FROM council_members ORDER BY name ASC'),
   update: db.prepare(`
     UPDATE council_members
-    SET name = ?, email = ?, unit_number = ?, updated_at = ?
+    SET name = ?, email = ?, unit_number = ?, whatsapp = ?, updated_at = ?
     WHERE id = ?
   `),
   delete: db.prepare('DELETE FROM council_members WHERE id = ?'),

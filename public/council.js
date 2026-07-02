@@ -1,8 +1,9 @@
-function openEditModal(id, name, email, unit) {
+function openEditModal(id, name, email, unit, whatsapp) {
   document.getElementById('editForm').action = '/admin/council/' + id + '/edit';
   document.getElementById('edit_name').value = name;
   document.getElementById('edit_email').value = email;
   document.getElementById('edit_unit_number').value = unit;
+  document.getElementById('edit_whatsapp').value = whatsapp || '';
   document.getElementById('editModal').style.display = 'block';
   document.body.style.overflow = 'hidden';
 }

@@ -38,6 +38,7 @@ const {
 const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
 const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
 const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
+const { startEmailTriggerPoller } = require('./services/emailTriggerPoller');
 
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
@@ -1514,7 +1515,7 @@ app.get('/admin/council', requireAuth, (req, res) => {
 });
 
 app.post('/admin/council', requireAuth, validate(schemas.councilMember), (req, res) => {
-  const { name, email, unit_number } = req.body;
+  const { name, email, unit_number, whatsapp } = req.body;
 
   try {
     const existing = councilQueries.findByEmail.get(email);
@@ -1523,7 +1524,7 @@ app.post('/admin/council', requireAuth, validate(schemas.councilMember), (req, r
     }
 
     const now = new Date().toISOString();
-    councilQueries.create.run(name, email, unit_number || null, now, now);
+    councilQueries.create.run(name, email, unit_number || null, whatsapp || null, now, now);
 
     logger.info(`Council member created: ${email}`);
     res.redirect('/admin/council?success=' + encodeURIComponent('Council member added successfully'));
@@ -1535,7 +1536,7 @@ app.post('/admin/council', requireAuth, validate(schemas.councilMember), (req, r
 
 app.post('/admin/council/:id/edit', requireAuth, validate(schemas.councilMember), (req, res) => {
   const { id } = req.params;
-  const { name, email, unit_number } = req.body;
+  const { name, email, unit_number, whatsapp } = req.body;
 
   try {
     const existing = councilQueries.getById.get(id);
@@ -1549,7 +1550,7 @@ app.post('/admin/council/:id/edit', requireAuth, validate(schemas.councilMember)
     }
 
     const now = new Date().toISOString();
-    councilQueries.update.run(name, email, unit_number || null, now, id);
+    councilQueries.update.run(name, email, unit_number || null, whatsapp || null, now, id);
 
     logger.info(`Council member updated: ${id}`);
     res.redirect('/admin/council?success=' + encodeURIComponent('Council member updated successfully'));
@@ -1679,14 +1680,42 @@ app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
 app.get('/admin/settings', requireAuth, (req, res) => {
   const property_manager_name = getSetting('property_manager_name') || '';
   const property_manager_email = getSetting('property_manager_email') || '';
-  res.render('admin_settings', { 
-    error: null, 
+  res.render('admin_settings', {
+    error: null,
     success: null,
     dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
     property_manager_name,
-    property_manager_email
+    property_manager_email,
+    imap_host: getSetting('imap_host') || process.env.IMAP_HOST || '',
+    imap_port: getSetting('imap_port') || process.env.IMAP_PORT || '993',
+    imap_user: getSetting('imap_user') || process.env.IMAP_USER || '',
+    imap_password_set: !!(getSetting('imap_password') || process.env.IMAP_PASSWORD),
+    imap_authorized_senders: getSetting('imap_authorized_senders') || process.env.IMAP_AUTHORIZED_SENDERS || '',
+    imap_poll_interval_ms: getSetting('imap_poll_interval_ms') || process.env.IMAP_POLL_INTERVAL_MS || '60000',
+    imap_default_deadline_hours: getSetting('imap_default_deadline_hours') || process.env.IMAP_DEFAULT_DEADLINE_HOURS || '48',
+    openwa_url: getSetting('openwa_url') || process.env.OPENWA_URL || '',
+    openwa_api_key_set: !!(getSetting('openwa_api_key') || process.env.OPENWA_API_KEY),
+    openwa_session_id: getSetting('openwa_session_id') || process.env.OPENWA_SESSION_ID || ''
   });
 });
+
+function getSettingsData() {
+  return {
+    property_manager_name: getSetting('property_manager_name') || '',
+    property_manager_email: getSetting('property_manager_email') || '',
+    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
+    imap_host: getSetting('imap_host') || process.env.IMAP_HOST || '',
+    imap_port: getSetting('imap_port') || process.env.IMAP_PORT || '993',
+    imap_user: getSetting('imap_user') || process.env.IMAP_USER || '',
+    imap_password_set: !!(getSetting('imap_password') || process.env.IMAP_PASSWORD),
+    imap_authorized_senders: getSetting('imap_authorized_senders') || process.env.IMAP_AUTHORIZED_SENDERS || '',
+    imap_poll_interval_ms: getSetting('imap_poll_interval_ms') || process.env.IMAP_POLL_INTERVAL_MS || '60000',
+    imap_default_deadline_hours: getSetting('imap_default_deadline_hours') || process.env.IMAP_DEFAULT_DEADLINE_HOURS || '48',
+    openwa_url: getSetting('openwa_url') || process.env.OPENWA_URL || '',
+    openwa_api_key_set: !!(getSetting('openwa_api_key') || process.env.OPENWA_API_KEY),
+    openwa_session_id: getSetting('openwa_session_id') || process.env.OPENWA_SESSION_ID || ''
+  };
+}
 
 function renderAdminSettings(req, res, { error = null, success = null, property_manager_name, property_manager_email } = {}) {
   const pmName = typeof property_manager_name === 'string' ? property_manager_name : (getSetting('property_manager_name') || '');
@@ -1695,7 +1724,7 @@ function renderAdminSettings(req, res, { error = null, success = null, property_
   return res.render('admin_settings', {
     error,
     success,
-    dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
+    ...getSettingsData(),
     property_manager_name: pmName,
     property_manager_email: pmEmail
   });
@@ -1821,6 +1850,62 @@ app.post('/admin/settings/test-email', requireAuth, async (req, res) => {
   }
 });
 
+// Save email trigger (IMAP) settings
+app.post('/admin/settings/email-trigger', requireAuth, (req, res) => {
+  const {
+    imap_host, imap_port, imap_user, imap_password,
+    imap_authorized_senders, imap_poll_interval_ms, imap_default_deadline_hours
+  } = req.body;
+
+  try {
+    if (imap_host !== undefined) setSetting('imap_host', imap_host.trim());
+    if (imap_port !== undefined) setSetting('imap_port', imap_port.trim());
+    if (imap_user !== undefined) setSetting('imap_user', imap_user.trim());
+    if (imap_password && imap_password.trim()) setSetting('imap_password', imap_password.trim());
+    if (imap_authorized_senders !== undefined) setSetting('imap_authorized_senders', imap_authorized_senders.trim());
+    if (imap_poll_interval_ms !== undefined) setSetting('imap_poll_interval_ms', imap_poll_interval_ms.trim());
+    if (imap_default_deadline_hours !== undefined) setSetting('imap_default_deadline_hours', imap_default_deadline_hours.trim());
+
+    logger.info('Email trigger settings updated', { sessionId: req.session.id, ip: req.ip });
+    return renderAdminSettings(req, res, { success: 'Email trigger settings saved.' });
+  } catch (err) {
+    logger.error('Failed to save email trigger settings:', err);
+    return renderAdminSettings(req, res, { error: 'Failed to save email trigger settings.' });
+  }
+});
+
+// Save WhatsApp (OpenWA) settings
+app.post('/admin/settings/whatsapp', requireAuth, (req, res) => {
+  const { openwa_url, openwa_api_key, openwa_session_id } = req.body;
+
+  try {
+    if (openwa_url !== undefined) setSetting('openwa_url', openwa_url.trim());
+    if (openwa_api_key && openwa_api_key.trim()) setSetting('openwa_api_key', openwa_api_key.trim());
+    if (openwa_session_id !== undefined) setSetting('openwa_session_id', openwa_session_id.trim());
+
+    logger.info('WhatsApp settings updated', { sessionId: req.session.id, ip: req.ip });
+    return renderAdminSettings(req, res, { success: 'WhatsApp settings saved.' });
+  } catch (err) {
+    logger.error('Failed to save WhatsApp settings:', err);
+    return renderAdminSettings(req, res, { error: 'Failed to save WhatsApp settings.' });
+  }
+});
+
+// Public results page (no authentication required)
+app.get('/results/:id', (req, res) => {
+  const { id } = req.params;
+  const motion = motionQueries.getById.get(id);
+
+  if (!motion || !['Closed', 'Published'].includes(motion.status)) {
+    return res.status(404).send('<h1>Results not available.</h1><p>The results for this motion have not been published yet.</p>');
+  }
+
+  motion.options = JSON.parse(motion.options_json);
+  const stats = getMotionStats(id);
+
+  res.render('public_results', { motion, stats });
+});
+
 // Health check endpoints (for Coolify/Docker/monitoring)
 app.get('/health', (req, res) => {
   try {
@@ -1855,6 +1940,9 @@ app.get('/healthz', (req, res) => {
 const server = app.listen(PORT, () => {
   logger.info(`Strata Vote server running at ${BASE_URL}`);
   logger.info(`Admin login: ${BASE_URL}/admin/login`);
+
+  // Start email trigger poller (no-op if IMAP not configured)
+  startEmailTriggerPoller(BASE_URL);
 });
 
 // Graceful shutdown
