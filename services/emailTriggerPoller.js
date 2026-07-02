@@ -169,40 +169,46 @@ async function pollOnceInner(baseUrl) {
 
     result.unseenCount = uids.length;
 
-    // Fetch envelopes only first — no body download yet
+    // Pass 1: collect all envelopes (drain the stream fully before issuing any more commands)
+    const candidates = [];
     for await (const msg of client.fetch(uids, { envelope: true }, { uid: true })) {
-      const from = msg.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
-      const messageId = msg.envelope?.messageId ?? null;
+      candidates.push({ uid: msg.uid, envelope: msg.envelope });
+    }
+
+    // Pass 2: filter and process — each source fetch is a fresh command after the previous stream closed
+    for (const { uid, envelope } of candidates) {
+      const from = envelope?.from?.[0]?.address?.toLowerCase() ?? '';
+      const messageId = envelope?.messageId ?? null;
 
       if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
         logger.debug('Email trigger: ignoring unauthorized sender', { from });
-        await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+        await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         result.skipped++;
         continue;
       }
 
       if (messageId && isEmailAlreadyProcessed(messageId)) {
         logger.info('Email trigger: skipping already-processed message', { messageId });
-        await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+        await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         result.skipped++;
         continue;
       }
 
-      // Passed all filters — now fetch the full source for this one message
+      // Passed all filters — fetch full source for this one message
       try {
         let source = null;
-        for await (const full of client.fetch([msg.uid], { source: true }, { uid: true })) {
+        for await (const full of client.fetch(uid, { source: true }, { uid: true })) {
           source = full.source;
         }
 
         if (!source) {
-          await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+          await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
           result.skipped++;
           continue;
         }
 
         const parsed = await simpleParser(source);
-        const title = (msg.envelope?.subject ?? 'New Vote').trim();
+        const title = (envelope?.subject ?? 'New Vote').trim();
         const body = (parsed.text ?? '').trim();
         const deadlineDate = new Date(Date.now() + cfg.defaultDeadlineHours * 3_600_000);
 
@@ -217,11 +223,11 @@ async function pollOnceInner(baseUrl) {
         logger.info('Vote created via email trigger', { motionId: motion.id, title, from, members: memberCount });
         result.processed++;
       } catch (err) {
-        logger.error('Failed to process trigger email', { error: err.message, uid: msg.uid });
+        logger.error('Failed to process trigger email', { error: err.message, uid });
         result.errors++;
       }
 
-      await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
+      await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
     }
   } finally {
     lock.release();
