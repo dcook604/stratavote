@@ -77,7 +77,7 @@ function buildRecipientsForMotion(motionId) {
   };
 }
 
-function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminResultsUrl, propertyManagerName }) {
+function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicResultsUrl, propertyManagerName }) {
   const counts = {};
   for (const row of stats.results || []) {
     counts[row.choice] = row.count;
@@ -97,6 +97,8 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
     `Motion: ${motion.motion_ref} - ${motion.title}`,
     `Close reason: ${closeReason}`,
     '',
+    motion.description || '',
+    '',
     'Summary:',
     `Eligible: ${stats.eligible}`,
     `Cast: ${stats.voted}`,
@@ -106,7 +108,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
     '',
     `Outcome: ${outcome}`,
     '',
-    `Admin results: ${adminResultsUrl}`,
+    `View results: ${publicResultsUrl}`,
     ''
   ].join('\n');
 
@@ -114,6 +116,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
     <p>Hello ${salutationName},</p>
     <p><strong>Motion:</strong> ${motion.motion_ref} - ${motion.title}</p>
     <p><strong>Close reason:</strong> ${closeReason}</p>
+    ${motion.description ? `<p>${motion.description.replace(/\n/g, '<br>')}</p>` : ''}
     <h3>Summary</h3>
     <ul>
       <li><strong>Eligible:</strong> ${stats.eligible}</li>
@@ -123,7 +126,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
       <li><strong>Abstain:</strong> ${abstain}</li>
     </ul>
     <p><strong>Outcome:</strong> ${outcome}</p>
-    <p><a href="${adminResultsUrl}">View results in admin</a></p>
+    <p><a href="${publicResultsUrl}">View results</a></p>
   `.trim();
 
   return { subject, text, html };
@@ -158,7 +161,7 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
   const stats = getMotionStats(motionId);
   const closeReason = getMotionCloseReason(motion);
   const outcome = computeOutcomeFromResults(motion, stats);
-  const adminResultsUrl = `${baseUrl}/admin/motions/${motionId}`;
+  const publicResultsUrl = `${baseUrl}/results/${motionId}`;
 
   const { name: propertyManagerName } = getPropertyManager();
 
@@ -167,7 +170,7 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
     stats,
     closeReason,
     outcome,
-    adminResultsUrl,
+    publicResultsUrl,
     propertyManagerName
   });
 
