@@ -35,7 +35,7 @@ const {
   markNotificationFailed,
   enqueueTokenEmail
 } = require('./db');
-const { isEmailConfigured, sendVotingLink, testEmailConfig } = require('./email');
+const { isEmailConfigured, sendVotingLink, testEmailConfig, sendGenericEmail } = require('./email');
 const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
 const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
 const { startEmailTriggerPoller, pollOnce: emailTriggerPollOnce } = require('./services/emailTriggerPoller');
@@ -1230,6 +1230,39 @@ app.post('/admin/motions/:id/outcome', requireAuth, (req, res) => {
   } catch (err) {
     logger.error('Outcome update error:', err);
     res.redirect(`/admin/motions/${id}?error=Failed+to+update+outcome`);
+  }
+});
+
+// Manually send the results email to everyone who voted plus the property manager
+app.post('/admin/motions/:id/send-results-email', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const motion = motionQueries.getById.get(id);
+
+  if (!motion) {
+    return res.status(404).send('Motion not found');
+  }
+
+  if (!['Closed', 'Published'].includes(motion.status)) {
+    return res.redirect(`/admin/motions/${id}?error=Motion+must+be+Closed+or+Published+before+sending+results`);
+  }
+
+  try {
+    const result = await sendResultsEmailForMotion({
+      motionId: id,
+      baseUrl: BASE_URL,
+      sendMailFn: sendGenericEmail,
+      force: true
+    });
+
+    if (result.sent) {
+      res.redirect(`/admin/motions/${id}?success=Results+email+sent+to+${result.recipientCount}+recipient(s)`);
+    } else {
+      logger.warn('manual results email not sent', { motionId: id, reason: result.reason });
+      res.redirect(`/admin/motions/${id}?error=Results+email+not+sent:+${encodeURIComponent(result.reason || 'unknown error')}`);
+    }
+  } catch (err) {
+    logger.error('Manual results email send failed', { motionId: id, error: err.message });
+    res.redirect(`/admin/motions/${id}?error=Failed+to+send+results+email`);
   }
 });
 

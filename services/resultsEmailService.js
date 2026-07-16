@@ -1,8 +1,9 @@
 const logger = require('../logger');
-const { getMotionStats, motionQueries, tokenQueries, getSetting } = require('../db');
+const { getMotionStats, motionQueries, ballotQueries, getSetting } = require('../db');
 
 function isResultsEmailsEnabled() {
-  return process.env.RESULTS_EMAILS_ENABLED === 'true';
+  // Enabled by default; set RESULTS_EMAILS_ENABLED=false to disable the automatic worker.
+  return process.env.RESULTS_EMAILS_ENABLED !== 'false';
 }
 
 function normalizeEmail(email) {
@@ -63,9 +64,9 @@ function computeOutcomeFromResults(motion, stats) {
 }
 
 function buildRecipientsForMotion(motionId) {
-  const tokens = tokenQueries.getByMotion.all(motionId);
-  const participantEmails = tokens
-    .map(t => t.recipient_email)
+  const ballots = ballotQueries.getByMotion.all(motionId);
+  const participantEmails = ballots
+    .map(b => b.recipient_email)
     .filter(Boolean);
 
   const { email: pmEmail } = getPropertyManager();
@@ -128,9 +129,9 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, adminRe
   return { subject, text, html };
 }
 
-async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn }) {
-  if (!isResultsEmailsEnabled()) {
-    logger.warn('results email skipped: RESULTS_EMAILS_ENABLED not true', { motionId });
+async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force = false }) {
+  if (!force && !isResultsEmailsEnabled()) {
+    logger.warn('results email skipped: RESULTS_EMAILS_ENABLED=false', { motionId });
     return { sent: false, skipped: true, reason: 'results_emails_disabled' };
   }
 

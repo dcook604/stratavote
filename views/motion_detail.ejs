@@ -213,6 +213,16 @@
             </a>
           </div>
 
+          <% if (motion.status === 'Closed' || motion.status === 'Published') { %>
+            <div class="action-form-section">
+              <form method="POST" action="/admin/motions/<%= motion.id %>/send-results-email"
+                    onsubmit="return confirm('Send the results email to everyone who voted and the property manager?')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                <button type="submit" class="btn btn-secondary btn-block">Email Results</button>
+              </form>
+            </div>
+          <% } %>
+
           <% if (motion.status === 'Draft' || motion.status === 'Open') { %>
             <div class="action-form-section">
               <form method="POST" action="/admin/motions/<%= motion.id %>/delete"
