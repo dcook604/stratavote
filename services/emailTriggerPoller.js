@@ -166,6 +166,14 @@ async function pollOnceInner(baseUrl) {
     socketTimeout: 30000
   });
 
+  // ImapFlow is an EventEmitter and emits 'error' for connection-level failures
+  // that happen after connect() has already resolved (e.g. a socket drop mid-poll).
+  // Without a listener here, Node throws that emit synchronously and crashes the
+  // whole process -- this is what was taking the server down and causing restarts.
+  client.on('error', err => {
+    logger.error('Email trigger: IMAP client error', { error: err.message, code: err.code || '' });
+  });
+
   let lock;
 
   try {

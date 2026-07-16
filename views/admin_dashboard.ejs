@@ -126,6 +126,14 @@
             <div class="motion-actions">
               <a href="/admin/motions/<%= motion.id %>" class="btn btn-secondary btn-sm">View Details</a>
               <a href="/admin/motions/<%= motion.id %>/tokens" class="btn btn-secondary btn-sm">Manage Tokens</a>
+              <% if (motion.status === 'Closed' || motion.status === 'Published') { %>
+                <form method="POST" action="/admin/motions/<%= motion.id %>/send-results-email"
+                      style="display:inline"
+                      onsubmit="return confirm('Send the results email to everyone who voted and the property manager?')">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                  <button type="submit" class="btn btn-secondary btn-sm">Email Results</button>
+                </form>
+              <% } %>
             </div>
           </div>
         <% }) %>

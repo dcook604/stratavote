@@ -40,6 +40,21 @@ const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
 const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
 const { startEmailTriggerPoller, pollOnce: emailTriggerPollOnce } = require('./services/emailTriggerPoller');
 
+// Log unexpected errors instead of letting Node crash the process silently.
+// Without these, a stray unhandled rejection or an EventEmitter 'error' with
+// no listener (e.g. from a background IMAP/WhatsApp call) takes the whole
+// server down with no trace of why, which shows up as unexplained restarts.
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', {
+    error: reason && reason.message ? reason.message : String(reason),
+    stack: reason && reason.stack
+  });
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception', { error: err.message, stack: err.stack });
+});
+
 // Validate required environment variables
 if (!process.env.ADMIN_PASSWORD) {
   logger.error('ERROR: ADMIN_PASSWORD environment variable is required');
