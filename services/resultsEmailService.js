@@ -77,7 +77,7 @@ function buildRecipientsForMotion(motionId) {
   };
 }
 
-function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicResultsUrl, propertyManagerName }) {
+function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicResultsUrl, propertyManagerName, voterStatus }) {
   const counts = {};
   for (const row of stats.results || []) {
     counts[row.choice] = row.count;
@@ -91,13 +91,17 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
 
   const salutationName = propertyManagerName ? propertyManagerName : 'there';
 
+  const voters = (voterStatus || []).filter(v => v.choice);
+
   const text = [
     `Hello ${salutationName},`,
     '',
     `Motion: ${motion.motion_ref} - ${motion.title}`,
-    `Close reason: ${closeReason}`,
     '',
-    motion.description || '',
+    'Description:',
+    motion.description || '(none)',
+    '',
+    `Close reason: ${closeReason}`,
     '',
     'Summary:',
     `Eligible: ${stats.eligible}`,
@@ -105,18 +109,33 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
     `Yes: ${yes}`,
     `No: ${no}`,
     `Abstain: ${abstain}`,
-    '',
     `Outcome: ${outcome}`,
+    '',
+    'Votes:',
+    ...(voters.length > 0
+      ? voters.map(v => `${v.recipient_name || v.recipient_email || 'Unknown'}${v.unit_number ? ` (Unit ${v.unit_number})` : ''}: ${v.choice}`)
+      : ['No votes recorded.']),
     '',
     `View results: ${publicResultsUrl}`,
     ''
   ].join('\n');
 
+  const voterRows = voters.length > 0
+    ? voters.map(v => `
+      <tr>
+        <td>${v.recipient_name || v.recipient_email || 'Unknown'}</td>
+        <td>${v.unit_number || '-'}</td>
+        <td>${v.choice}</td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="3">No votes recorded.</td></tr>';
+
   const html = `
     <p>Hello ${salutationName},</p>
     <p><strong>Motion:</strong> ${motion.motion_ref} - ${motion.title}</p>
+    <p><strong>Description:</strong></p>
+    <p>${(motion.description || '(none)').replace(/\n/g, '<br>')}</p>
     <p><strong>Close reason:</strong> ${closeReason}</p>
-    ${motion.description ? `<p>${motion.description.replace(/\n/g, '<br>')}</p>` : ''}
     <h3>Summary</h3>
     <ul>
       <li><strong>Eligible:</strong> ${stats.eligible}</li>
@@ -124,8 +143,17 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
       <li><strong>Yes:</strong> ${yes}</li>
       <li><strong>No:</strong> ${no}</li>
       <li><strong>Abstain:</strong> ${abstain}</li>
+      <li><strong>Outcome:</strong> ${outcome}</li>
     </ul>
-    <p><strong>Outcome:</strong> ${outcome}</p>
+    <h3>Votes</h3>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+      <thead>
+        <tr><th>Name</th><th>Unit</th><th>Vote</th></tr>
+      </thead>
+      <tbody>
+        ${voterRows}
+      </tbody>
+    </table>
     <p><a href="${publicResultsUrl}">View results</a></p>
   `.trim();
 
@@ -162,6 +190,7 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
   const closeReason = getMotionCloseReason(motion);
   const outcome = computeOutcomeFromResults(motion, stats);
   const publicResultsUrl = `${baseUrl}/results/${motionId}`;
+  const voterStatus = ballotQueries.getVoterStatusByMotion.all(motionId);
 
   const { name: propertyManagerName } = getPropertyManager();
 
@@ -171,7 +200,8 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
     closeReason,
     outcome,
     publicResultsUrl,
-    propertyManagerName
+    propertyManagerName,
+    voterStatus
   });
 
   await sendMailFn({
