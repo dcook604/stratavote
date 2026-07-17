@@ -66,6 +66,38 @@
         </div>
       <% } %>
 
+      <h3 style="margin: 1.75rem 0 0.75rem;">Voter Breakdown</h3>
+      <% if (voterStatus && voterStatus.length > 0) { %>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+            <thead>
+              <tr style="text-align: left; border-bottom: 1px solid var(--color-border);">
+                <th style="padding: 0.5rem 0.5rem 0.5rem 0;">Name</th>
+                <th style="padding: 0.5rem 0.5rem 0.5rem 0;">Unit</th>
+                <th style="padding: 0.5rem 0;">Vote</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% voterStatus.forEach(function(v) { %>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                  <td style="padding: 0.5rem 0.5rem 0.5rem 0;"><%= v.recipient_name || v.recipient_email || 'Unknown' %></td>
+                  <td style="padding: 0.5rem 0.5rem 0.5rem 0;"><%= v.unit_number || '-' %></td>
+                  <td style="padding: 0.5rem 0;">
+                    <% if (v.choice) { %>
+                      <%= v.choice %>
+                    <% } else { %>
+                      <span class="text-muted">Did not vote</span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } else { %>
+        <p class="text-muted">No voter information available.</p>
+      <% } %>
+
       <p class="text-muted" style="font-size: 0.8rem; margin-top: 1.5rem; text-align: center;">
         Closed: <%= new Date(motion.close_at).toLocaleString() %>
       </p>

@@ -1969,8 +1969,9 @@ app.get('/results/:id', (req, res) => {
 
   motion.options = JSON.parse(motion.options_json);
   const stats = getMotionStats(id);
+  const voterStatus = ballotQueries.getVoterStatusByMotion.all(id);
 
-  res.render('public_results', { motion, stats });
+  res.render('public_results', { motion, stats, voterStatus });
 });
 
 // Health check endpoints (for Coolify/Docker/monitoring)

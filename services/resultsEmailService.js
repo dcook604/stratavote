@@ -91,7 +91,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
 
   const salutationName = propertyManagerName ? propertyManagerName : 'there';
 
-  const voters = (voterStatus || []).filter(v => v.choice);
+  const voters = voterStatus || [];
 
   const text = [
     `Hello ${salutationName},`,
@@ -113,8 +113,8 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
     '',
     'Votes:',
     ...(voters.length > 0
-      ? voters.map(v => `${v.recipient_name || v.recipient_email || 'Unknown'}${v.unit_number ? ` (Unit ${v.unit_number})` : ''}: ${v.choice}`)
-      : ['No votes recorded.']),
+      ? voters.map(v => `${v.recipient_name || v.recipient_email || 'Unknown'}${v.unit_number ? ` (Unit ${v.unit_number})` : ''}: ${v.choice || 'Did not vote'}`)
+      : ['No voter information available.']),
     '',
     `View results: ${publicResultsUrl}`,
     ''
@@ -125,10 +125,10 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
       <tr>
         <td>${v.recipient_name || v.recipient_email || 'Unknown'}</td>
         <td>${v.unit_number || '-'}</td>
-        <td>${v.choice}</td>
+        <td>${v.choice || 'Did not vote'}</td>
       </tr>
     `).join('')
-    : '<tr><td colspan="3">No votes recorded.</td></tr>';
+    : '<tr><td colspan="3">No voter information available.</td></tr>';
 
   const html = `
     <p>Hello ${salutationName},</p>
