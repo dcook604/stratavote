@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
-const csrf = require('csurf');
+const { doubleCsrf } = require('csrf-csrf');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const Joi = require('joi');
@@ -51,8 +51,11 @@ process.on('unhandledRejection', (reason) => {
   });
 });
 
+// After an uncaught exception the process state is undefined: log, then exit
+// so the container supervisor restarts it cleanly.
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught exception', { error: err.message, stack: err.stack });
+  setTimeout(() => process.exit(1), 500).unref();
 });
 
 // Validate required environment variables
@@ -83,14 +86,12 @@ const PORT = process.env.PORT || 3300;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Helper to get the base URL from request (respects proxy)
-function getBaseUrl(req) {
-  const proto = req.get('x-forwarded-proto') || req.protocol;
-  const host = req.get('x-forwarded-host') || req.get('host');
-  return `${proto}://${host}`;
-}
-
-// BASE_URL for logging and emails only (not for redirects)
+// Always use the configured BASE_URL; never build links from request headers
+// (X-Forwarded-Host / Host can be spoofed -> host-header poisoning in emails).
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+function getBaseUrl() {
+  return BASE_URL;
+}
 
 // Trust proxy headers when behind a reverse proxy (Coolify/Traefik/nginx)
 app.set('trust proxy', 1);
@@ -106,6 +107,7 @@ logger.info('Environment configuration', {
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5,
+  skipSuccessfulRequests: true,
   message: 'Too many login attempts. Please try again in 15 minutes.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -431,53 +433,19 @@ logger.info('Session middleware configured', {
 // the session, it creates a new empty one. On login, session.save() persists
 // it and sends a fresh cookie to the browser.
 
-// GLOBAL HTTP LOGGER - Logs ALL requests with session details
+// HTTP logger. Deliberately does NOT log session IDs, cookies, or query strings
+// (vote tokens travel in ?token=...) so logs cannot be used to hijack anything.
 app.use((req, res, next) => {
   const start = Date.now();
+  const safePath = req.originalUrl.split('?')[0];
 
-  // Log immediately when request arrives
-  logger.info('HTTP REQUEST', {
-    method: req.method,
-    path: req.originalUrl,
-    sessionID: req.sessionID,
-    sessionKeys: Object.keys(req.session || {}),
-    hasIsAdmin: 'isAdmin' in (req.session || {}),
-    isAdmin: req.session?.isAdmin,
-    hasCookieHeader: !!req.headers.cookie,
-    referer: req.headers.referer || 'none',
-    userAgent: req.get('user-agent')?.substring(0, 50)
-  });
-
-  // Log when response finishes
   res.on('finish', () => {
-    const duration = Date.now() - start;
-    const setCookieRaw = res.getHeader('set-cookie');
-
-    // Parse Set-Cookie to show details (not the actual value for security)
-    let cookieInfo = 'none';
-    let rawCookieForDebug = 'none';
-    if (setCookieRaw) {
-      const cookieStr = Array.isArray(setCookieRaw) ? setCookieRaw[0] : setCookieRaw;
-      // Log the FULL raw cookie to diagnose SameSite mismatch
-      rawCookieForDebug = cookieStr;
-      const parts = cookieStr.split(';').map(p => p.trim());
-      const name = parts[0].split('=')[0];
-      const flags = parts.slice(1).join('; ');
-      cookieInfo = `${name}=<value>; ${flags}`;
-    }
-
-    logger.info('HTTP RESPONSE', {
+    logger.info('HTTP', {
       method: req.method,
-      path: req.originalUrl,
+      path: safePath,
       status: res.statusCode,
-      duration: `${duration}ms`,
-      sessionID: req.sessionID,
-      sessionKeys: Object.keys(req.session || {}),
-      isAdmin: req.session?.isAdmin,
-      setCookieHeader: !!setCookieRaw,
-      setCookieDetails: cookieInfo,
-      RAW_SET_COOKIE_HEADER: rawCookieForDebug, // DEBUG: full cookie to find SameSite issue
-      location: res.getHeader('location') || 'none'
+      duration: `${Date.now() - start}ms`,
+      isAdmin: isAdminAuthenticated(req.session)
     });
   });
 
@@ -507,6 +475,7 @@ app.use(helmet({
   },
   frameguard: { action: 'deny' },
   noSniff: true,
+  referrerPolicy: { policy: 'no-referrer' },
   xssFilter: true
 }));
 
@@ -542,34 +511,38 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// CSRF protection using COOKIES (not session) to avoid overwriting session cookie
-// cookie: true means CSRF tokens are stored in a separate cookie, not in the session
-const csrfProtection = csrf({
-  cookie: {
-    key: '_csrf',
+// CSRF protection (double-submit cookie, HMAC-bound to the session ID).
+// csurf is deprecated/unmaintained; csrf-csrf replaces it.
+const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
+  getSecret: () => process.env.SESSION_SECRET,
+  getSessionIdentifier: (req) => req.sessionID || '',
+  cookieName: IS_PRODUCTION ? '__Host-strata.csrf' : 'strata.csrf',
+  cookieOptions: {
     httpOnly: true,
     secure: IS_PRODUCTION,
     sameSite: 'lax',
     path: '/'
-  }
+  },
+  getCsrfTokenFromRequest: (req) =>
+    (req.body && req.body._csrf) || req.query._csrf || req.headers['x-csrf-token']
 });
+
 app.use((req, res, next) => {
   // Skip CSRF for voting endpoints (they use one-time tokens for auth)
   if (req.path.startsWith('/vote/') && req.method === 'POST') {
     return next();
   }
-  if (req.path.match(/^\/vote\/\d+$/) && req.method === 'GET') {
-    return next();
-  }
-  // Skip CSRF for login POST (password-only form, no CSRF attack vector)
+  // Skip CSRF for login POST (no session to attack; rate limited)
   if (req.path === '/admin/login' && req.method === 'POST') {
     return next();
   }
-  csrfProtection(req, res, next);
+  doubleCsrfProtection(req, res, next);
 });
 
 app.use((req, res, next) => {
-  res.locals.csrfToken = req.csrfToken;
+  // Memoize: every call sets the CSRF cookie, so all forms on a page must share one token
+  let cached;
+  res.locals.csrfToken = () => (cached = cached || generateCsrfToken(req, res));
   next();
 });
 
@@ -580,7 +553,6 @@ app.use((err, req, res, next) => {
   logger.warn('CSRF token validation failed', {
     path: req.path,
     method: req.method,
-    sessionID: req.sessionID
   });
 
   // For admin routes, redirect to login (session/CSRF likely stale after redeploy)
@@ -606,7 +578,6 @@ function requireAuth(req, res, next) {
 
   logger.warn('Auth failed - redirecting to login', {
     path: req.path,
-    sessionID: req.sessionID
   });
 
   res.redirect('/admin/login');
@@ -834,27 +805,35 @@ app.post('/admin/login', loginLimiter, validate(schemas.login), (req, res, next)
   const passwordValid = verifyAdminPassword(password);
 
   if (!passwordValid) {
-    logger.warn('Login failed - invalid password', { sessionID: req.sessionID });
+    logger.warn('Login failed - invalid password', { ip: req.ip });
     return res.render('admin_login', { error: 'Invalid password.' });
   }
 
-  // Set admin flag and save session
-  req.session.isAdmin = true;
-  req.session.save((err) => {
-    if (err) {
-      logger.error('Session save error on login', { error: err.message, sessionID: req.sessionID });
-      return next(err);
+  // Regenerate the session on login to prevent session fixation
+  req.session.regenerate((regenErr) => {
+    if (regenErr) {
+      logger.error('Session regenerate error on login', { error: regenErr.message });
+      return next(regenErr);
     }
+    req.session.isAdmin = true;
+    req.session.save((err) => {
+      if (err) {
+        logger.error('Session save error on login', { error: err.message });
+        return next(err);
+      }
 
-    logger.info('Login success', { sessionID: req.sessionID });
-    return res.redirect('/admin/dashboard');
+      logger.info('Login success', { ip: req.ip });
+      return res.redirect('/admin/dashboard');
+    });
   });
 });
 
 // Logout
 app.post('/admin/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/admin/login');
+  req.session.destroy(() => {
+    res.clearCookie('strata.sid');
+    res.redirect('/admin/login');
+  });
 });
 
 // Dashboard
@@ -1977,25 +1956,11 @@ app.get('/results/:id', (req, res) => {
 // Health check endpoints (for Coolify/Docker/monitoring)
 app.get('/health', (req, res) => {
   try {
-    // Check database connection
-    const dbCheck = db.prepare('SELECT 1').get();
-
-    res.status(200).json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      database: dbCheck ? 'connected' : 'disconnected',
-      memory: {
-        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
-      }
-    });
+    db.prepare('SELECT 1').get();
+    res.status(200).json({ status: 'healthy' });
   } catch (err) {
     logger.error('Health check failed:', err);
-    res.status(503).json({
-      status: 'unhealthy',
-      error: 'Database connection failed'
-    });
+    res.status(503).json({ status: 'unhealthy' });
   }
 });
 

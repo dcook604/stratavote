@@ -1,5 +1,6 @@
 const logger = require('../logger');
 const { getMotionStats, motionQueries, ballotQueries, getSetting } = require('../db');
+const { escapeHtml } = require('../email');
 
 function isResultsEmailsEnabled() {
   // Enabled by default; set RESULTS_EMAILS_ENABLED=false to disable the automatic worker.
@@ -123,19 +124,19 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
   const voterRows = voters.length > 0
     ? voters.map(v => `
       <tr>
-        <td>${v.recipient_name || v.recipient_email || 'Unknown'}</td>
-        <td>${v.unit_number || '-'}</td>
-        <td>${v.choice || 'Did not vote'}</td>
+        <td>${escapeHtml(v.recipient_name || v.recipient_email || 'Unknown')}</td>
+        <td>${escapeHtml(v.unit_number || '-')}</td>
+        <td>${escapeHtml(v.choice || 'Did not vote')}</td>
       </tr>
     `).join('')
     : '<tr><td colspan="3">No voter information available.</td></tr>';
 
   const html = `
-    <p>Hello ${salutationName},</p>
-    <p><strong>Motion:</strong> ${motion.motion_ref} - ${motion.title}</p>
+    <p>Hello ${escapeHtml(salutationName)},</p>
+    <p><strong>Motion:</strong> ${escapeHtml(motion.motion_ref)} - ${escapeHtml(motion.title)}</p>
     <p><strong>Description:</strong></p>
-    <p>${(motion.description || '(none)').replace(/\n/g, '<br>')}</p>
-    <p><strong>Close reason:</strong> ${closeReason}</p>
+    <p>${escapeHtml(motion.description || '(none)').replace(/\n/g, '<br>')}</p>
+    <p><strong>Close reason:</strong> ${escapeHtml(closeReason)}</p>
     <h3>Summary</h3>
     <ul>
       <li><strong>Eligible:</strong> ${stats.eligible}</li>
@@ -143,7 +144,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
       <li><strong>Yes:</strong> ${yes}</li>
       <li><strong>No:</strong> ${no}</li>
       <li><strong>Abstain:</strong> ${abstain}</li>
-      <li><strong>Outcome:</strong> ${outcome}</li>
+      <li><strong>Outcome:</strong> ${escapeHtml(outcome)}</li>
     </ul>
     <h3>Votes</h3>
     <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
@@ -154,7 +155,7 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
         ${voterRows}
       </tbody>
     </table>
-    <p><a href="${publicResultsUrl}">View results</a></p>
+    <p><a href="${escapeHtml(publicResultsUrl)}">View results</a></p>
   `.trim();
 
   return { subject, text, html };

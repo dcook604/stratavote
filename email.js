@@ -66,8 +66,14 @@ function getTransporter() {
 }
 
 // Generate HTML email template
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function generateHtmlEmail(recipientName, votingLink, motion) {
-  const name = recipientName || 'Strata Council Member';
+  const name = escapeHtml(recipientName || 'Strata Council Member');
 
   return `
 <!DOCTYPE html>
@@ -164,22 +170,22 @@ function generateHtmlEmail(recipientName, votingLink, motion) {
 
     <p>You have been invited to vote on the following motion:</p>
 
-    <div class="motion-title">${motion.title}</div>
+    <div class="motion-title">${escapeHtml(motion.title)}</div>
 
     <div class="motion-description">
-      ${motion.description.replace(/\n/g, '<br>')}
+      ${escapeHtml(motion.description).replace(/\n/g, '<br>')}
     </div>
 
     <p><strong>Click the button below to cast your vote:</strong></p>
 
-    <a href="${votingLink}" class="button">Vote Now</a>
+    <a href="${escapeHtml(votingLink)}" class="button">Vote Now</a>
 
     <div class="warning">
       ⚠️ <strong>Important:</strong> This voting link can only be used once. Once you submit your vote, the link will be deactivated.
     </div>
 
     <p>If the button doesn't work, copy and paste this link into your browser:</p>
-    <div class="link-box">${votingLink}</div>
+    <div class="link-box">${escapeHtml(votingLink)}</div>
 
     <div class="footer">
       <p>This is an automated message from your Strata Council voting system. Please do not reply to this email.</p>
@@ -311,5 +317,6 @@ module.exports = {
   isEmailConfigured,
   sendVotingLink,
   testEmailConfig,
-  sendGenericEmail
+  sendGenericEmail,
+  escapeHtml
 };

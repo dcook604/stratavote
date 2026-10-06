@@ -33,7 +33,7 @@ openssl rand -base64 48
 
 **Example:**
 ```
-SESSION_SECRET=kJ8fH3mN9pQ2rT5vW8xZ1aB4cD7eF0gH2iJ5kL8mN1oP4qR7sT0uV3wX6yZ9
+SESSION_SECRET=<generate-with-openssl-rand-base64-48>
 ```
 
 ---
@@ -47,7 +47,7 @@ ADMIN_PASSWORD=your_secure_password_here
 
 **Your current password:**
 ```
-ADMIN_PASSWORD=Eveseto123!@#
+ADMIN_PASSWORD=<your-strong-admin-password>
 ```
 
 ---
@@ -142,7 +142,7 @@ Then attempt login and look for:
 # REQUIRED
 NODE_ENV=production
 SESSION_SECRET=<48-char-random-string>
-ADMIN_PASSWORD=Eveseto123!@#
+ADMIN_PASSWORD=<your-strong-admin-password>
 
 # OPTIONAL
 BASE_URL=https://vote.spectrum4.ca

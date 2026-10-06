@@ -9,3 +9,8 @@ logs/
 backups/
 .claude/
 .DS_Store
+sessions.db*
+persistent/
+*.sqlite*
+*.db
+*.db-*

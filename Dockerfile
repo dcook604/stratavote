@@ -1,5 +1,5 @@
 # Multi-stage build for production-ready Strata Vote application
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder
 
 # Install build dependencies for native modules (better-sqlite3)
 RUN apk add --no-cache python3 make g++
@@ -10,10 +10,10 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Production stage
-FROM node:18-alpine
+FROM node:22-alpine
 
 # Install runtime dependencies
 # su-exec: drop privileges from root to nodejs user (like gosu but for Alpine)
@@ -41,7 +41,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Note: Mounted volumes will override these, but the entrypoint will fix them at runtime
 RUN mkdir -p logs backups persistent && \
     chown -R nodejs:nodejs /app && \
-    chmod -R 755 /app && \
+    chmod -R u=rwX,g=rX,o= /app && \
     (chmod +x scripts/backup.sh 2>/dev/null || true)
 
 # DO NOT switch to nodejs user here

@@ -50,3 +50,13 @@ coverage/
 *.md.backup
 tmp/
 temp/
+
+# Runtime data
+sessions.db*
+persistent/
+*.sqlite*
+*.db
+.env*
+!.env.example
+logs/
+.claude/

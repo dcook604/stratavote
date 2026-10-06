@@ -18,7 +18,7 @@ setup_directory() {
   chown -R nodejs:nodejs "$dir"
 
   # Set permissions (rwxr-xr-x)
-  chmod -R 755 "$dir"
+  chmod -R u=rwX,g=rX,o= "$dir"
 
   echo "✅ $dir ready"
 }

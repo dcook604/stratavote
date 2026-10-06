@@ -136,7 +136,7 @@ Login failed - invalid password
 **Fix:**
 Check Coolify environment variables:
 ```bash
-ADMIN_PASSWORD=Eveseto123!@#
+ADMIN_PASSWORD=<your-strong-admin-password>
 SESSION_SECRET=<32+ character random string>
 NODE_ENV=production
 ```
@@ -254,7 +254,7 @@ Request {
 ```bash
 curl -v -X POST https://vote.spectrum4.ca/admin/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "password=Eveseto123!@#" \
+  -d "password=<your-strong-admin-password>" \
   -c cookies.txt \
   -L
 
@@ -295,7 +295,7 @@ If curl FAILS:
 ### Fix 1: Missing Environment Variables
 ```bash
 # In Coolify, set these environment variables:
-ADMIN_PASSWORD=Eveseto123!@#
+ADMIN_PASSWORD=<your-strong-admin-password>
 SESSION_SECRET=$(openssl rand -base64 48)
 NODE_ENV=production
 BASE_URL=https://vote.spectrum4.ca

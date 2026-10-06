@@ -24,10 +24,42 @@ function hashPassword(password) {
 }
 
 // Verify password
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
 function verifyPassword(password, hashedPassword) {
+  if (typeof hashedPassword !== 'string' || !hashedPassword.includes(':')) return false;
   const [salt, hash] = hashedPassword.split(':');
   const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return hash === verifyHash;
+  return safeEqual(hash, verifyHash);
+}
+
+// Encryption at rest for secrets stored in app_settings (AES-256-GCM, key
+// derived from SESSION_SECRET). Values are prefixed 'enc:v1:'; legacy plaintext
+// values are still readable and get encrypted the next time they are saved.
+const SECRET_SETTING_KEYS = new Set(['imap_password', 'openwa_api_key']);
+function settingsKey() {
+  return crypto.scryptSync(process.env.SESSION_SECRET || '', 'strata-vote-settings-v1', 32);
+}
+function encryptSecret(plain) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', settingsKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  return 'enc:v1:' + Buffer.concat([iv, cipher.getAuthTag(), enc]).toString('base64');
+}
+function decryptSecret(value) {
+  if (typeof value !== 'string' || !value.startsWith('enc:v1:')) return value;
+  try {
+    const buf = Buffer.from(value.slice(7), 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', settingsKey(), buf.subarray(0, 12));
+    decipher.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+  } catch (e) {
+    return null; // wrong SESSION_SECRET or corrupted value
+  }
 }
 
 const db = new Database(dbPath);
@@ -795,7 +827,7 @@ function verifyAdminPassword(password) {
   const admin = adminQueries.getPassword.get();
   if (!admin) {
     // Fallback to environment variable if no password in database
-    return password === process.env.ADMIN_PASSWORD;
+    return safeEqual(password, process.env.ADMIN_PASSWORD || '');
   }
   return verifyPassword(password, admin.password_hash);
 }
@@ -812,10 +844,12 @@ function updateAdminPassword(newPassword, updatedBy) {
 
 function getSetting(key) {
   const row = appSettingsQueries.get.get(key);
-  return row ? row.value : null;
+  if (!row) return null;
+  return SECRET_SETTING_KEYS.has(key) ? decryptSecret(row.value) : row.value;
 }
 
 function setSetting(key, value) {
+  if (SECRET_SETTING_KEYS.has(key) && value) value = encryptSecret(value);
   return appSettingsQueries.upsert.run(key, value, new Date().toISOString());
 }
 
