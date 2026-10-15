@@ -450,6 +450,21 @@ function initDatabase() {
     throw err;
   }
 
+  // Migration: per-motion opt-in for listing individual votes on the PUBLIC
+  // results page (/results/:id, no authentication). Defaults to 0 = aggregate
+  // totals only. Must run after the motions table has been rebuilt by the UUID /
+  // foreign-key migrations above, otherwise the column would be dropped.
+  try {
+    const motionColumns = db.pragma('table_info(motions)');
+    if (!motionColumns.some(col => col.name === 'show_voter_breakdown')) {
+      db.exec('ALTER TABLE motions ADD COLUMN show_voter_breakdown INTEGER NOT NULL DEFAULT 0');
+      require('./logger').info('Added show_voter_breakdown column to motions table');
+    }
+  } catch (err) {
+    require('./logger').error('Failed to add show_voter_breakdown column', { error: err.message });
+    throw err;
+  }
+
   // Council Members table
   db.exec(`
     CREATE TABLE IF NOT EXISTS council_members (
@@ -579,6 +594,10 @@ const motionQueries = {
 
   updateOutcome: db.prepare(`
     UPDATE motions SET outcome = ?, outcome_notes = ? WHERE id = ?
+  `),
+
+  updateShowVoterBreakdown: db.prepare(`
+    UPDATE motions SET show_voter_breakdown = ? WHERE id = ?
   `),
 
   delete: db.prepare('DELETE FROM motions WHERE id = ?')
@@ -817,7 +836,10 @@ function getMotionStats(motionId) {
   return {
     eligible: eligibleCount,
     voted: ballotCount.count,
-    remaining: eligibleCount - ballotCount.count,
+    // Never negative: tokens revoked after someone voted can make the ballot
+    // count exceed the eligible count, which would otherwise render as "-2
+    // remaining" and confuse the "everyone has voted" close rule.
+    remaining: Math.max(0, eligibleCount - ballotCount.count),
     results
   };
 }

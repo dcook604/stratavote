@@ -78,21 +78,14 @@ function buildRecipientsForMotion(motionId) {
   };
 }
 
-function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicResultsUrl, propertyManagerName, voterStatus }) {
-  const counts = {};
-  for (const row of stats.results || []) {
-    counts[row.choice] = row.count;
-  }
-
-  const yes = counts.Yes || counts.YES || 0;
-  const no = counts.No || counts.NO || 0;
-  const abstain = counts.Abstain || counts.ABSTAIN || 0;
-
+function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicResultsUrl, propertyManagerName }) {
   const subject = `Motion ${motion.motion_ref} results: ${String(outcome || 'UNKNOWN').toUpperCase()}`;
 
   const salutationName = propertyManagerName ? propertyManagerName : 'there';
 
-  const voters = voterStatus || [];
+  // Aggregate breakdown, driven by the motion's actual options so custom choices
+  // are reported correctly rather than being forced into Yes/No/Abstain.
+  const breakdown = (stats.results || []).map(r => ({ choice: r.choice, count: r.count }));
 
   const text = [
     `Hello ${salutationName},`,
@@ -105,31 +98,24 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
     `Close reason: ${closeReason}`,
     '',
     'Summary:',
-    `Eligible: ${stats.eligible}`,
-    `Cast: ${stats.voted}`,
-    `Yes: ${yes}`,
-    `No: ${no}`,
-    `Abstain: ${abstain}`,
-    `Outcome: ${outcome}`,
+    `  Eligible: ${stats.eligible}`,
+    `  Cast: ${stats.voted}`,
+    ...(breakdown.length > 0
+      ? breakdown.map(r => `  ${r.choice}: ${r.count}`)
+      : ['  No votes cast']),
+    `  Outcome: ${outcome}`,
     '',
-    'Votes:',
-    ...(voters.length > 0
-      ? voters.map(v => `${v.recipient_name || v.recipient_email || 'Unknown'}${v.unit_number ? ` (Unit ${v.unit_number})` : ''}: ${v.choice || 'Did not vote'}`)
-      : ['No voter information available.']),
+    // Individual ballots are deliberately not included: this message goes to
+    // every participant at once.
+    'Individual votes are not listed. Aggregate results are available at the link below.',
     '',
     `View results: ${publicResultsUrl}`,
     ''
   ].join('\n');
 
-  const voterRows = voters.length > 0
-    ? voters.map(v => `
-      <tr>
-        <td>${escapeHtml(v.recipient_name || v.recipient_email || 'Unknown')}</td>
-        <td>${escapeHtml(v.unit_number || '-')}</td>
-        <td>${escapeHtml(v.choice || 'Did not vote')}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="3">No voter information available.</td></tr>';
+  const breakdownItems = breakdown.length > 0
+    ? breakdown.map(r => `<li><strong>${escapeHtml(r.choice)}:</strong> ${r.count}</li>`).join('\n      ')
+    : '<li>No votes cast</li>';
 
   const html = `
     <p>Hello ${escapeHtml(salutationName)},</p>
@@ -141,20 +127,10 @@ function buildResultsEmailContent({ motion, stats, closeReason, outcome, publicR
     <ul>
       <li><strong>Eligible:</strong> ${stats.eligible}</li>
       <li><strong>Cast:</strong> ${stats.voted}</li>
-      <li><strong>Yes:</strong> ${yes}</li>
-      <li><strong>No:</strong> ${no}</li>
-      <li><strong>Abstain:</strong> ${abstain}</li>
+      ${breakdownItems}
       <li><strong>Outcome:</strong> ${escapeHtml(outcome)}</li>
     </ul>
-    <h3>Votes</h3>
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
-      <thead>
-        <tr><th>Name</th><th>Unit</th><th>Vote</th></tr>
-      </thead>
-      <tbody>
-        ${voterRows}
-      </tbody>
-    </table>
+    <p style="color:#666;font-size:13px;">Individual votes are not listed. Aggregate results are available at the link below.</p>
     <p><a href="${escapeHtml(publicResultsUrl)}">View results</a></p>
   `.trim();
 
@@ -191,7 +167,6 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
   const closeReason = getMotionCloseReason(motion);
   const outcome = computeOutcomeFromResults(motion, stats);
   const publicResultsUrl = `${baseUrl}/results/${motionId}`;
-  const voterStatus = ballotQueries.getVoterStatusByMotion.all(motionId);
 
   const { name: propertyManagerName } = getPropertyManager();
 
@@ -201,12 +176,14 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
     closeReason,
     outcome,
     publicResultsUrl,
-    propertyManagerName,
-    voterStatus
+    propertyManagerName
   });
 
+  // bcc: every participant is a recipient, so nobody should see the others'
+  // addresses in the To header.
   await sendMailFn({
     to: recipients,
+    bcc: true,
     subject: content.subject,
     text: content.text,
     html: content.html

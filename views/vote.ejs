@@ -8,6 +8,23 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <%
+    // Colour the buttons by meaning rather than by position. Options are
+    // free-form, so styling the 1st/2nd/3rd button green/red/grey painted
+    // "No" green whenever a motion listed No first.
+    const yesTones = ['yes', 'y', 'approve', 'approved', 'for', 'agree', 'in favour', 'in favor', 'support'];
+    const noTones  = ['no', 'n', 'reject', 'rejected', 'against', 'oppose', 'disagree'];
+    const abstainTones = ['abstain', 'abstention', 'neutral', 'no vote'];
+
+    function choiceTone(option) {
+      const key = String(option).trim().toLowerCase();
+      if (yesTones.includes(key)) return 'yes';
+      if (noTones.includes(key)) return 'no';
+      if (abstainTones.includes(key)) return 'abstain';
+      return 'neutral';
+    }
+  %>
+
   <header class="vote-header">
     <div class="vote-header-inner">Spectrum 4 Council Vote</div>
   </header>
@@ -32,32 +49,67 @@
         <div class="vote-form">
           <h3>Select your vote</h3>
 
-          <!-- Confirmation overlay (hidden by default) -->
-          <div id="confirmOverlay" style="display:none; margin-bottom: 1rem;">
-            <div class="alert alert-info" style="margin-bottom: 0.75rem;">
-              You are about to vote: <strong id="confirmChoice"></strong>.<br>
-              <small>This action cannot be undone — your token will be used.</small>
+          <!--
+            Without JavaScript the buttons below would do nothing and the voter
+            would be stuck, so this block supplies real submit buttons. The
+            scripted UI is hidden at the same time.
+          -->
+          <noscript>
+            <style>#jsVoteUI { display: none !important; }</style>
+            <div class="alert alert-info" style="margin-bottom: 1rem;">
+              JavaScript is disabled in your browser. Choose an option and press
+              &#8220;Cast Vote&#8221; to submit it &mdash; there will be no extra
+              confirmation step.
             </div>
-            <div style="display: flex; gap: 0.5rem;">
-              <button type="button" id="confirmBtn" class="btn btn-primary" style="flex:1;">Confirm Vote</button>
-              <button type="button" id="cancelBtn" class="btn btn-secondary" style="flex:1;">Cancel</button>
+            <form method="POST" action="/vote/<%= motion.id %>" class="vote-form-inner">
+              <input type="hidden" name="token" value="<%= token.token %>">
+              <div class="vote-options">
+                <% motion.options.forEach(option => { %>
+                  <button type="submit"
+                          name="choice"
+                          value="<%= option %>"
+                          class="vote-button vote-button--<%= choiceTone(option) %>">
+                    <%= option %>
+                  </button>
+                <% }) %>
+              </div>
+            </form>
+          </noscript>
+
+          <div id="jsVoteUI">
+            <!-- Confirmation overlay (hidden by default) -->
+            <div id="confirmOverlay"
+                 role="alertdialog"
+                 aria-modal="true"
+                 aria-labelledby="confirmHeading"
+                 aria-describedby="confirmHelp"
+                 tabindex="-1"
+                 style="display:none; margin-bottom: 1rem;">
+              <div class="alert alert-info" style="margin-bottom: 0.75rem;">
+                <span id="confirmHeading">You are about to vote: <strong id="confirmChoice"></strong>.</span><br>
+                <small id="confirmHelp">This action cannot be undone &mdash; your token will be used.</small>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <button type="button" id="confirmBtn" class="btn btn-primary" style="flex:1;">Confirm Vote</button>
+                <button type="button" id="cancelBtn" class="btn btn-secondary" style="flex:1;">Cancel</button>
+              </div>
             </div>
+
+            <form method="POST" action="/vote/<%= motion.id %>" class="vote-form-inner" id="voteForm">
+              <input type="hidden" name="token" value="<%= token.token %>">
+              <input type="hidden" name="choice" id="choiceInput" value="">
+
+              <div class="vote-options" id="voteOptions">
+                <% motion.options.forEach(option => { %>
+                  <button type="button"
+                          class="vote-button vote-button--<%= choiceTone(option) %>"
+                          data-choice="<%= option %>">
+                    <%= option %>
+                  </button>
+                <% }) %>
+              </div>
+            </form>
           </div>
-
-          <form method="POST" action="/vote/<%= motion.id %>" class="vote-form-inner" id="voteForm">
-            <input type="hidden" name="token" value="<%= token.token %>">
-            <input type="hidden" name="choice" id="choiceInput" value="">
-
-            <div class="vote-options" id="voteOptions">
-              <% motion.options.forEach(option => { %>
-                <button type="button"
-                        class="vote-button"
-                        data-choice="<%= option %>">
-                  <%= option %>
-                </button>
-              <% }) %>
-            </div>
-          </form>
         </div>
 
         <p class="privacy-note">

@@ -133,13 +133,14 @@
         <!-- Desktop table -->
         <div class="council-table-wrap table-responsive">
           <table class="table">
+            <caption class="visually-hidden">Saved council members</caption>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Unit</th>
-                <th>WhatsApp</th>
-                <th>Actions</th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Unit</th>
+                <th scope="col">WhatsApp</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -152,12 +153,14 @@
                   <td>
                     <div style="display: flex; gap: 0.4rem;">
                       <button
+                        type="button"
                         class="btn btn-sm btn-secondary js-edit-member"
                         data-id="<%= member.id %>"
-                        data-name="<%- member.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                        data-email="<%- member.email.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                        data-unit="<%- (member.unit_number || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                        data-whatsapp="<%- (member.whatsapp || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                        data-name="<%= member.name %>"
+                        data-email="<%= member.email %>"
+                        data-unit="<%= member.unit_number || '' %>"
+                        data-whatsapp="<%= member.whatsapp || '' %>"
+                        aria-label="Edit <%= member.name %>"
                       >Edit</button>
                       <form method="POST" action="/admin/council/<%= member.id %>/delete" style="display: inline;" class="js-delete-member-form">
                         <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
@@ -181,12 +184,14 @@
               </div>
               <div style="display: flex; gap: 0.4rem;">
                 <button
+                  type="button"
                   class="btn btn-sm btn-secondary js-edit-member"
                   data-id="<%= member.id %>"
-                  data-name="<%- member.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                  data-email="<%- member.email.replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                  data-unit="<%- (member.unit_number || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
-                  data-whatsapp="<%- (member.whatsapp || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;') %>"
+                  data-name="<%= member.name %>"
+                  data-email="<%= member.email %>"
+                  data-unit="<%= member.unit_number || '' %>"
+                  data-whatsapp="<%= member.whatsapp || '' %>"
+                  aria-label="Edit <%= member.name %>"
                 >Edit</button>
                 <form method="POST" action="/admin/council/<%= member.id %>/delete" class="js-delete-member-form">
                   <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
@@ -202,11 +207,11 @@
   </div>
 
   <!-- Edit Modal -->
-  <div id="editModal" class="modal">
+  <div id="editModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle" aria-hidden="true">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>Edit Council Member</h3>
-        <button class="modal-close" onclick="closeEditModal()" aria-label="Close">&times;</button>
+        <h3 id="editModalTitle">Edit Council Member</h3>
+        <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
       </div>
       <form id="editForm" method="POST" action="" class="form">
         <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
@@ -232,7 +237,7 @@
         </div>
 
         <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
-          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+          <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
           <button type="submit" class="btn btn-primary">Save Changes</button>
         </div>
       </form>

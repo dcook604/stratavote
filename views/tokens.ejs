@@ -70,16 +70,17 @@
         <!-- Desktop table view -->
         <div class="token-table-view table-responsive">
           <table class="table">
+            <caption class="visually-hidden">Voter tokens for <%= motion.title %></caption>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Unit</th>
-                <th>Status</th>
-                <th>Email</th>
-                <th>Used At</th>
-                <th>Voting Link</th>
-                <th>Actions</th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Unit</th>
+                <th scope="col">Status</th>
+                <th scope="col">Email Delivery</th>
+                <th scope="col">Used At</th>
+                <th scope="col">Voting Link</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -113,9 +114,9 @@
                     <% if (token.status === 'Active') { %>
                       <input type="text"
                              value="<%= baseUrl %>/vote/<%= motion.id %>?token=<%= token.token %>"
-                             class="link-input"
+                             class="link-input js-select-on-click"
                              readonly
-                             onclick="this.select()">
+                             aria-label="Voting link for <%= token.recipient_name || 'this voter' %>">
                     <% } else { %>
                       -
                     <% } %>
@@ -123,9 +124,10 @@
                   <td>
                     <% if (token.status === 'Active') { %>
                       <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
-                        <form method="POST" action="/admin/tokens/<%= token.id %>/revoke" style="display: inline;">
+                        <form method="POST" action="/admin/tokens/<%= token.id %>/revoke" style="display: inline;"
+                              data-confirm="Revoke this token? The voting link will stop working immediately.">
                           <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
-                          <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">Revoke</button>
+                          <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
                         </form>
                         <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
                           <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email" style="display: inline;">
@@ -175,14 +177,15 @@
               <% if (token.status === 'Active') { %>
                 <input type="text"
                        value="<%= baseUrl %>/vote/<%= motion.id %>?token=<%= token.token %>"
-                       class="token-card-link"
+                       class="token-card-link js-select-on-click"
                        readonly
-                       onclick="this.select()">
+                       aria-label="Voting link for <%= token.recipient_name || 'this voter' %>">
 
                 <div class="token-card-actions">
-                  <form method="POST" action="/admin/tokens/<%= token.id %>/revoke">
+                  <form method="POST" action="/admin/tokens/<%= token.id %>/revoke"
+                        data-confirm="Revoke this token? The voting link will stop working immediately.">
                     <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
-                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Revoke this token?')">Revoke</button>
+                    <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
                   </form>
                   <% if (token.recipient_email && (!token.email_sent || token.email_error)) { %>
                     <form method="POST" action="/admin/tokens/<%= token.id %>/resend-email">

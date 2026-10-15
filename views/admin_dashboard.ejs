@@ -19,6 +19,13 @@
       </div>
     </div>
 
+    <% if (success) { %>
+      <div class="alert alert-success"><%= success %></div>
+    <% } %>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
     <!-- Date Filter Form -->
     <div class="card">
       <h3>Filter Motions</h3>
@@ -38,9 +45,13 @@
             <input type="datetime-local"
                    id="end_date"
                    name="end_date"
-                   value="<%= endDate || '' %>">
+                   value="<%= endDate || '' %>"
+                   data-after="start_date" data-after-error="dateRangeError"
+                   data-after-message="The end of the range must be after the start.">
           </div>
         </div>
+
+        <p class="field-error" id="dateRangeError" role="alert" style="display:none; color: #c0392b; margin-bottom: 1rem;"></p>
 
         <div style="display: flex; gap: 1rem;">
           <button type="submit" class="btn btn-primary">Apply Filter</button>
@@ -50,11 +61,22 @@
         </div>
       </form>
 
-      <% if (isFiltered) { %>
+      <% if (isInvertedRange) { %>
+        <div class="alert alert-error" style="margin-top: 1rem;">
+          <strong>No results:</strong> the "To" date is earlier than the "From" date.
+          Swap them to see a range.
+        </div>
+      <% } else if (isFiltered) { %>
         <div class="alert alert-info" style="margin-top: 1rem;">
-          <strong>Filtered:</strong> Showing motions closing between
-          <%= new Date(startDate).toLocaleString() %> and <%= new Date(endDate).toLocaleString() %>
-          (<%= motions.length %> results)
+          <strong>Filtered:</strong>
+          <% if (isPartialFilter) { %>
+            showing motions closing
+            <%= startDate ? 'on or after ' + new Date(startDate).toLocaleString() : 'on or before ' + new Date(endDate).toLocaleString() %>
+          <% } else { %>
+            showing motions closing between
+            <%= new Date(startDate).toLocaleString() %> and <%= new Date(endDate).toLocaleString() %>
+          <% } %>
+          (<%= motions.length %> result<%= motions.length === 1 ? '' : 's' %>)
         </div>
       <% } else { %>
         <p class="text-muted" style="margin-top: 1rem;">
@@ -129,7 +151,7 @@
               <% if (motion.status === 'Closed' || motion.status === 'Published') { %>
                 <form method="POST" action="/admin/motions/<%= motion.id %>/send-results-email"
                       style="display:inline"
-                      onsubmit="return confirm('Send the results email to everyone who voted and the property manager?')">
+                      data-confirm="Send the results email to everyone who voted and the property manager?">
                   <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
                   <button type="submit" class="btn btn-secondary btn-sm">Email Results</button>
                 </form>
@@ -140,5 +162,7 @@
       </div>
     <% } %>
   </div>
+
+  <script src="/motion-dates.js"></script>
 </body>
 </html>

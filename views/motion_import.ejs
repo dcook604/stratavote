@@ -137,18 +137,19 @@
           All imported motions are created as <strong>Draft</strong> status. Review and open them individually from the dashboard.
         </p>
 
-        <form method="POST" action="/admin/motions/import?_csrf=<%= encodeURIComponent(csrfToken()) %>" enctype="multipart/form-data" id="importForm">
+        <form method="POST" action="/admin/motions/import" enctype="multipart/form-data" id="importForm">
           <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
 
           <div class="form-group">
-            <label>CSV File *</label>
+            <label for="csv_file">CSV File *</label>
             <div class="import-zone" id="importZone">
               <input type="file" name="csv_file" id="csv_file" accept=".csv,text/csv" required>
-              <div class="import-zone-icon">📄</div>
+              <div class="import-zone-icon" aria-hidden="true">📄</div>
               <div class="import-zone-label">Click to select or drag &amp; drop a CSV file</div>
               <div class="import-zone-hint">Maximum 100 motions · 500 KB limit · .csv files only</div>
               <div class="import-zone-filename" id="fileNameDisplay" style="display:none;"></div>
             </div>
+            <p class="field-error" id="fileError" role="alert" style="display:none; color: #991b1b; font-size: 0.85rem; margin-top: 0.5rem;"></p>
           </div>
 
           <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 1rem;">

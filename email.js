@@ -11,7 +11,21 @@ function isEmailConfigured() {
   );
 }
 
-async function sendGenericEmail({ to, subject, text, html }) {
+function normalizeAddresses(value) {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : String(value).split(',');
+  return list.map(a => (a || '').trim()).filter(Boolean);
+}
+
+/**
+ * Send a generic message.
+ *
+ * `bcc: true` moves the `to` recipients into the Bcc header and addresses the
+ * message at the configured sender, so recipients cannot see one another's
+ * addresses. `bcc: 'a@b,c@d'` sends to those addresses as blind copies instead.
+ * Used for results emails, which go to every participant at once.
+ */
+async function sendGenericEmail({ to, bcc, subject, text, html }) {
   if (!isEmailConfigured()) {
     logger.info('Email not configured, skipping email send');
     throw new Error('Email not configured');
@@ -22,9 +36,12 @@ async function sendGenericEmail({ to, subject, text, html }) {
     throw new Error('Failed to create email transporter');
   }
 
-  const recipients = Array.isArray(to) ? to : [to];
-  const filtered = recipients.map(r => (r || '').trim()).filter(Boolean);
-  if (filtered.length === 0) {
+  const toList = normalizeAddresses(to);
+  const bccList = normalizeAddresses(bcc);
+  const blind = bcc === true || bccList.length > 0;
+  const recipients = bccList.length > 0 ? bccList : toList;
+
+  if (recipients.length === 0) {
     throw new Error('No recipients provided');
   }
 
@@ -32,13 +49,19 @@ async function sendGenericEmail({ to, subject, text, html }) {
   const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
   const from = process.env.SMTP_FROM || `"${fromName}" <${fromEmail}>`;
 
-  await transporter.sendMail({
+  const mail = {
     from,
-    to: filtered.join(', '),
+    to: blind ? fromEmail : recipients.join(', '),
     subject,
     text,
     html
-  });
+  };
+
+  if (blind) {
+    mail.bcc = recipients.join(', ');
+  }
+
+  await transporter.sendMail(mail);
 }
 
 // Create transporter (lazy initialization)

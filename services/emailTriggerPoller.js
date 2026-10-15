@@ -112,7 +112,7 @@ function issueTokensToCouncil(motion, baseUrl) {
     if (whatsapp) {
       whatsappAttempted++;
       logger.info('issueTokensToCouncil: sending WhatsApp voting link', { name, phone: whatsapp, motionId: motion.id });
-      sendWhatsApp({ to: whatsapp, token, motionTitle: motion.title, baseUrl }).catch(err => {
+      sendWhatsApp({ to: whatsapp, motionId: motion.id, token, motionTitle: motion.title, baseUrl }).catch(err => {
         logger.warn('issueTokensToCouncil: WhatsApp send failed', { error: err.message, name, phone: whatsapp, motionId: motion.id });
       });
     }
@@ -145,6 +145,21 @@ async function pollOnceInner(baseUrl) {
   const cfg = getImapConfig();
   if (!cfg.user || !cfg.password) {
     return { connected: false, reason: 'IMAP credentials not configured' };
+  }
+
+  // Fail closed. Previously an empty allowlist disabled the sender check
+  // entirely, so anyone who could email this inbox could create a live motion
+  // and have voting links sent to every council member. Refuse to poll at all
+  // until at least one authorised sender is configured. Messages are left
+  // unread so they are still processed once the allowlist is set.
+  if (cfg.authorizedSenders.length === 0) {
+    logger.warn('Email trigger: refusing to poll, no authorised senders configured', {
+      hint: 'Set IMAP_AUTHORIZED_SENDERS, or the "Authorized Senders" field in Admin Settings.'
+    });
+    return {
+      connected: false,
+      reason: 'No authorised senders configured. Set IMAP_AUTHORIZED_SENDERS to enable email-created motions.'
+    };
   }
 
   const imapLogger = {
@@ -238,7 +253,7 @@ async function pollOnceInner(baseUrl) {
 
       logger.info('Email trigger: evaluating message', { uid, from, subject, messageId });
 
-      if (cfg.authorizedSenders.length > 0 && !cfg.authorizedSenders.includes(from)) {
+      if (!cfg.authorizedSenders.includes(from)) {
         logger.info('Email trigger: ignoring unauthorized sender', { uid, from, authorizedSenders: cfg.authorizedSenders });
         await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         result.skipped++;
@@ -268,8 +283,14 @@ async function pollOnceInner(baseUrl) {
         }
 
         const parsed = await simpleParser(source);
-        const title = (envelope?.subject ?? 'New Vote').trim();
-        const body = (parsed.text ?? '').trim();
+
+        // Bound the fields taken from the email so an oversized subject or body
+        // cannot be stored, and so the stored values match the limits the web
+        // form enforces (title 200, description 5000).
+        const title = ((envelope?.subject ?? '').trim().slice(0, 200)) || 'New Vote';
+        const body = (parsed.text ?? '').trim().slice(0, 5000);
+        const description = body || title;
+
         const deadlineDate = new Date(Date.now() + cfg.defaultDeadlineHours * 3_600_000);
 
         logger.info('Email trigger: creating motion from email', {
@@ -280,7 +301,7 @@ async function pollOnceInner(baseUrl) {
         });
 
         const motion = db.transaction(() => {
-          const m = createMotionFromEmail({ title, description: body, deadlineDate });
+          const m = createMotionFromEmail({ title, description, deadlineDate });
           if (messageId) recordProcessedEmail(messageId, m.id);
           return m;
         })();

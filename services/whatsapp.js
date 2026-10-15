@@ -16,7 +16,7 @@ function toChatId(phone) {
   return `${digits}@c.us`;
 }
 
-async function sendVotingLink({ to, token, motionTitle, baseUrl }) {
+async function sendVotingLink({ to, motionId, token, motionTitle, baseUrl }) {
   const cfg = getConfig();
 
   if (!cfg.openwaUrl || !cfg.openwaApiKey || !cfg.openwaSessionId) {
@@ -29,8 +29,14 @@ async function sendVotingLink({ to, token, motionTitle, baseUrl }) {
     return;
   }
 
+  if (!motionId) {
+    throw new Error('WhatsApp: sendVotingLink requires motionId to build the voting link');
+  }
+
   const chatId = toChatId(to);
-  const link = `${baseUrl.replace(/\/$/, '')}/vote/${token}`;
+  // Must match the /vote/:motionId route with ?token= -- the token alone is not
+  // a URL the voting page can resolve.
+  const link = `${baseUrl.replace(/\/$/, '')}/vote/${motionId}?token=${encodeURIComponent(token)}`;
   const text = `New vote: ${motionTitle}\n\nYou are invited to cast your vote. Tap the link below:\n\n${link}`;
   const url = `${cfg.openwaUrl.replace(/\/$/, '')}/api/sessions/${cfg.openwaSessionId}/messages/send-text`;
 

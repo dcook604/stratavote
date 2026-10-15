@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Syntax check and smoke test
+    runs-on: ubuntu-latest
+
+    env:
+      # Test-only values. The app refuses to start without both.
+      ADMIN_PASSWORD: ci_test_admin_password_1234
+      SESSION_SECRET: ci_test_session_secret_0123456789abcdef
+      PORT: "3000"
+      NODE_ENV: development
+      LOG_LEVEL: info
+      APP_TIMEZONE: America/Vancouver
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: |
+          find . -name '*.js' \
+            -not -path './node_modules/*' \
+            -not -path './.git/*' \
+            -not -path './apps/*' \
+            -print0 | xargs -0 -n1 node --check
+
+      - name: Start server
+        run: |
+          node server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null "http://localhost:$PORT/healthz"; then
+              echo "Server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          cat server.log
+          exit 1
+
+      - name: Smoke test
+        run: bash smoke-test.sh
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            server.log
+            logs/
+          if-no-files-found: ignore

@@ -127,14 +127,15 @@
               <h3 style="margin: 1.25rem 0 0.75rem; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted);">Individual Voting Status</h3>
               <div class="table-responsive">
                 <table class="table">
+                  <caption class="visually-hidden">Individual voting status for <%= motion.title %></caption>
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Unit</th>
-                      <th>Status</th>
-                      <th>Vote</th>
-                      <th>Submitted</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Email</th>
+                      <th scope="col">Unit</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Vote</th>
+                      <th scope="col">Submitted</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -168,7 +169,7 @@
             <div style="margin-top: 1.25rem;">
               <a href="/admin/motions/<%= motion.id %>/export.csv"
                  class="btn btn-secondary btn-sm"
-                 onclick="return confirm('This export contains personal information (names, emails). Ensure you handle it securely. Continue?')">
+                 data-confirm="This export contains personal information (names, emails). Ensure you handle it securely. Continue?">
                 Export Ballots (CSV)
               </a>
             </div>
@@ -216,17 +217,43 @@
           <% if (motion.status === 'Closed' || motion.status === 'Published') { %>
             <div class="action-form-section">
               <form method="POST" action="/admin/motions/<%= motion.id %>/send-results-email"
-                    onsubmit="return confirm('Send the results email to everyone who voted and the property manager?')">
+                    data-confirm="Send the results email to everyone who voted and the property manager?">
                 <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
                 <button type="submit" class="btn btn-secondary btn-block">Email Results</button>
               </form>
             </div>
           <% } %>
 
+          <% if (motion.status === 'Closed' || motion.status === 'Published') { %>
+            <div class="action-form-section">
+              <form method="POST" action="/admin/motions/<%= motion.id %>/voter-breakdown">
+                <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
+                <div class="form-group" style="margin-bottom: 0.5rem;">
+                  <label class="checkbox-label" for="show_voter_breakdown">
+                    <input type="checkbox"
+                           id="show_voter_breakdown"
+                           name="show_voter_breakdown"
+                           value="on"
+                           <%= showVoterBreakdown ? 'checked' : '' %>>
+                    <span>Show per-voter breakdown publicly</span>
+                  </label>
+                  <small>
+                    The public results page needs no login. When enabled it lists each
+                    voter's name, unit and choice. Leave off to publish totals only.
+                  </small>
+                </div>
+                <button type="submit" class="btn btn-secondary btn-sm">Update Public Results</button>
+              </form>
+              <p style="margin-top: 0.5rem; font-size: 0.8rem;">
+                <a href="/results/<%= motion.id %>" target="_blank" rel="noopener">Open the public results page &#8599;</a>
+              </p>
+            </div>
+          <% } %>
+
           <% if (motion.status === 'Draft' || motion.status === 'Open') { %>
             <div class="action-form-section">
               <form method="POST" action="/admin/motions/<%= motion.id %>/delete"
-                    onsubmit="return confirm('Are you sure you want to delete this motion? This action cannot be undone and will delete all associated voter tokens.')">
+                    data-confirm="Are you sure you want to delete this motion? This action cannot be undone and will delete all associated voter tokens and ballots.">
                 <input type="hidden" name="_csrf" value="<%= csrfToken() %>">
                 <button type="submit" class="btn btn-danger btn-block">Delete Motion</button>
               </form>

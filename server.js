@@ -39,6 +39,13 @@ const { isEmailConfigured, sendVotingLink, testEmailConfig, sendGenericEmail } =
 const { sendResultsEmailForMotion } = require('./services/resultsEmailService');
 const { sweepAndEnqueueCompletedMotions, processPendingResultsEmails, processPendingTokenEmails } = require('./services/notificationWorker');
 const { startEmailTriggerPoller, pollOnce: emailTriggerPollOnce } = require('./services/emailTriggerPoller');
+const {
+  parseMotionDateTime,
+  toDatetimeLocalValue,
+  getTimezone,
+  isTimezoneValid,
+  describeTimezone
+} = require('./lib/datetime');
 
 // Log unexpected errors instead of letting Node crash the process silently.
 // Without these, a stray unhandled rejection or an EventEmitter 'error' with
@@ -79,6 +86,38 @@ if (process.env.SESSION_SECRET === 'super_secret_session_key_change_in_productio
   logger.error('ERROR: You must change the default SESSION_SECRET');
   logger.error('Generate one with: openssl rand -base64 32');
   process.exit(1);
+}
+
+// ADMIN_PASSWORD is only used to seed the admin_settings row on first boot; after
+// that the stored hash wins and changing this variable has no effect (change it
+// from Admin Settings instead). Warn rather than exit, so an existing deployment
+// with a short password keeps booting rather than locking the operator out.
+const MIN_ADMIN_PASSWORD_LENGTH = 12;
+if (process.env.ADMIN_PASSWORD.length < MIN_ADMIN_PASSWORD_LENGTH) {
+  logger.warn('ADMIN_PASSWORD is shorter than the recommended minimum', {
+    length: process.env.ADMIN_PASSWORD.length,
+    recommendedMinimum: MIN_ADMIN_PASSWORD_LENGTH
+  });
+}
+
+// Resolve and report the motion-time timezone once at boot. A typo here would
+// otherwise silently fall back to the server's zone and shift every voting
+// window, which is exactly the failure this configuration exists to prevent.
+{
+  const tz = describeTimezone();
+  if (tz.mode === 'fixed-offset') {
+    logger.warn('APP_TIMEZONE_OFFSET_MINUTES is set; using a fixed UTC offset', {
+      offsetMinutes: tz.offsetMinutes,
+      note: 'Fixed offsets drift by an hour across daylight saving. Prefer APP_TIMEZONE (IANA name).'
+    });
+  } else if (!isTimezoneValid(tz.timeZone)) {
+    logger.error('APP_TIMEZONE is not a recognised IANA timezone; motion times will use the server zone', {
+      appTimezone: tz.timeZone,
+      serverTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    });
+  } else {
+    logger.info('Motion times interpreted in timezone', { appTimezone: tz.timeZone });
+  }
 }
 
 const app = express();
@@ -187,6 +226,19 @@ function validate(schema) {
   };
 }
 
+// Escape a value for a CSV text field and neutralise spreadsheet formula
+// injection: Excel and Google Sheets execute a cell beginning with =, +, - or @,
+// so a motion title or council member named "=cmd|'/c calc'!A0" becomes live
+// code when the admin opens the export. Prefixing with an apostrophe forces the
+// cell to be treated as text.
+function csvField(value) {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  if (s === '') return '';
+  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 // Export helper functions
 function generateCSVExport(res, exportData, start_date, end_date) {
   const now = new Date().toISOString();
@@ -196,7 +248,7 @@ function generateCSVExport(res, exportData, start_date, end_date) {
   let csv = 'VOTE RESULTS EXPORT\n';
   csv += `Generated: ${now}\n`;
   csv += `Date Range: ${start_date} to ${end_date}\n\n`;
-  csv += 'Motion ID,Motion Title,Status,Outcome,Opens At,Closes At,Required Majority,Eligible Voters,Votes Cast,Turnout %,Choice,Vote Count,Vote %\n';
+  csv += 'Motion ID,Motion Ref,Motion Title,Status,Outcome,Opens At,Closes At,Required Majority,Eligible Voters,Votes Cast,Turnout %,Choice,Vote Count,Vote %\n';
 
   for (const { motion, stats, results } of exportData) {
     const turnout = stats.eligible > 0
@@ -206,13 +258,14 @@ function generateCSVExport(res, exportData, start_date, end_date) {
     if (results.length === 0) {
       // Motion with no votes
       csv += [
-        motion.id,
-        `"${motion.title.replace(/"/g, '""')}"`,
-        motion.status,
-        motion.outcome || '',
-        motion.open_at,
-        motion.close_at,
-        motion.required_majority,
+        csvField(motion.id),
+        csvField(motion.motion_ref),
+        csvField(motion.title),
+        csvField(motion.status),
+        csvField(motion.outcome || ''),
+        csvField(motion.open_at),
+        csvField(motion.close_at),
+        csvField(motion.required_majority),
         stats.eligible,
         stats.voted,
         turnout,
@@ -228,17 +281,18 @@ function generateCSVExport(res, exportData, start_date, end_date) {
           : '0.00';
 
         csv += [
-          motion.id,
-          `"${motion.title.replace(/"/g, '""')}"`,
-          motion.status,
-          motion.outcome || '',
-          motion.open_at,
-          motion.close_at,
-          motion.required_majority,
+          csvField(motion.id),
+          csvField(motion.motion_ref),
+          csvField(motion.title),
+          csvField(motion.status),
+          csvField(motion.outcome || ''),
+          csvField(motion.open_at),
+          csvField(motion.close_at),
+          csvField(motion.required_majority),
           stats.eligible,
           stats.voted,
           turnout,
-          `"${result.choice.replace(/"/g, '""')}"`,
+          csvField(result.choice),
           result.count,
           percentage
         ].join(',') + '\n';
@@ -326,7 +380,10 @@ function generatePDFExport(res, exportData, start_date, end_date) {
 // Middleware
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.static('public'));
+
+// NOTE: express.static is deliberately mounted *after* helmet() further down.
+// Serving it here would mean /styles.css, /vote.js and friends go out without
+// the security headers.
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -428,6 +485,36 @@ logger.info('Session middleware configured', {
   maxAge: '3 hours'
 });
 
+// Destroy every stored session apart from `keepSessionId`. Used after a password
+// change so a cookie stolen beforehand stops working immediately instead of
+// remaining valid for the rest of its 3-hour lifetime.
+function invalidateOtherSessions(keepSessionId, callback) {
+  sqliteStore.all((err, sessions) => {
+    if (err) return callback(err);
+
+    const others = (sessions || [])
+      .map(s => (s && s.sid) || s)
+      .filter(sid => typeof sid === 'string' && sid !== keepSessionId);
+
+    if (others.length === 0) return callback(null, 0);
+
+    let remaining = others.length;
+    let destroyed = 0;
+    let firstErr = null;
+
+    others.forEach(sid => {
+      sqliteStore.destroy(sid, (destroyErr) => {
+        if (destroyErr) {
+          if (!firstErr) firstErr = destroyErr;
+        } else {
+          destroyed++;
+        }
+        if (--remaining === 0) callback(firstErr, destroyed);
+      });
+    });
+  });
+}
+
 // Note: No stale session recovery middleware needed.
 // express-session handles stale cookies gracefully: if the store can't find
 // the session, it creates a new empty one. On login, session.save() persists
@@ -475,39 +562,46 @@ app.use(helmet({
   },
   frameguard: { action: 'deny' },
   noSniff: true,
-  referrerPolicy: { policy: 'no-referrer' },
-  xssFilter: true
+  referrerPolicy: { policy: 'no-referrer' }
 }));
 
-// HTTPS enforcement in production
+// Static assets, now covered by the security headers above.
+app.use(express.static(path.join(__dirname, 'public')));
+
+// HTTPS enforcement in production.
+//
+// The redirect target is built from BASE_URL, never from Host/X-Forwarded-Host.
+// Those headers are attacker-controlled, and because req.url carries the query
+// string, a spoofed Host on a plaintext /vote/<id>?token=... request would have
+// redirected the voter -- token included -- to an arbitrary domain.
 if (process.env.NODE_ENV === 'production') {
+  let configuredOrigin = null;
+  try {
+    const parsed = new URL(BASE_URL);
+    if (parsed.protocol === 'https:') {
+      configuredOrigin = parsed.origin;
+    } else {
+      logger.warn('HTTPS redirect disabled: BASE_URL is not an https URL', { baseUrl: BASE_URL });
+    }
+  } catch (e) {
+    logger.error('HTTPS redirect disabled: BASE_URL could not be parsed', { baseUrl: BASE_URL });
+  }
+
   app.use((req, res, next) => {
     // Skip HTTPS redirect for health check endpoints
     if (req.path === '/healthz' || req.path === '/health') {
       return next();
     }
 
-    const forwardedProto = req.get('x-forwarded-proto');
-    const forwardedHost = req.get('x-forwarded-host');
+    const isHttps = req.secure || req.get('x-forwarded-proto') === 'https';
+    if (isHttps) return next();
 
-    // Check if request is already HTTPS (via proxy or direct)
-    const isHttps = req.secure || forwardedProto === 'https';
+    if (!configuredOrigin) return next();
 
-    if (!isHttps) {
-      // Use forwarded host if available, otherwise fallback to req.get('host')
-      const host = forwardedHost || req.get('host');
-      const redirectUrl = `https://${host}${req.url}`;
-
-      logger.info('HTTPS REDIRECT', {
-        from: `${req.protocol}://${req.get('host')}${req.url}`,
-        to: redirectUrl,
-        forwardedProto,
-        forwardedHost
-      });
-
-      return res.redirect(301, redirectUrl);
-    }
-    next();
+    // 308 (not 301) so a redirected POST is not downgraded to GET.
+    const redirectUrl = `${configuredOrigin}${req.originalUrl}`;
+    logger.info('HTTPS REDIRECT', { path: req.path, to: redirectUrl });
+    return res.redirect(308, redirectUrl);
   });
 }
 
@@ -523,8 +617,10 @@ const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
     sameSite: 'lax',
     path: '/'
   },
+  // Body/header only -- no query-string fallback. A token in the URL ends up in
+  // browser history, Referer headers and intermediary logs for no benefit.
   getCsrfTokenFromRequest: (req) =>
-    (req.body && req.body._csrf) || req.query._csrf || req.headers['x-csrf-token']
+    (req.body && req.body._csrf) || req.headers['x-csrf-token']
 });
 
 app.use((req, res, next) => {
@@ -534,6 +630,12 @@ app.use((req, res, next) => {
   }
   // Skip CSRF for login POST (no session to attack; rate limited)
   if (req.path === '/admin/login' && req.method === 'POST') {
+    return next();
+  }
+  // Skip the CSV import POST: its multipart body is not parsed until multer
+  // runs inside the route, so req.body._csrf is empty here. The route applies
+  // doubleCsrfProtection itself once the upload has been parsed.
+  if (req.path === '/admin/motions/import' && req.method === 'POST') {
     return next();
   }
   doubleCsrfProtection(req, res, next);
@@ -591,37 +693,12 @@ function hashIP(ip) {
     .digest('hex');
 }
 
-function parseMotionDateTime(value) {
-  if (!value) return new Date(NaN);
-  if (typeof value !== 'string') return new Date(value);
-
-  // Handle values from <input type="datetime-local"> which are typically like "YYYY-MM-DDTHH:mm"
-  // and therefore have no explicit timezone.
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m) {
-    const year = Number(m[1]);
-    const month = Number(m[2]);
-    const day = Number(m[3]);
-    const hour = Number(m[4]);
-    const minute = Number(m[5]);
-    const second = m[6] ? Number(m[6]) : 0;
-
-    // If APP_TIMEZONE_OFFSET_MINUTES is set (e.g. -480 for PST), interpret the input as that local
-    // time and convert to a UTC Date.
-    const offsetMinutesRaw = process.env.APP_TIMEZONE_OFFSET_MINUTES;
-    if (offsetMinutesRaw !== undefined && offsetMinutesRaw !== null && String(offsetMinutesRaw).trim() !== '') {
-      const offsetMinutes = Number(offsetMinutesRaw);
-      if (!Number.isNaN(offsetMinutes)) {
-        const utcMs = Date.UTC(year, month - 1, day, hour, minute, second) - (offsetMinutes * 60 * 1000);
-        return new Date(utcMs);
-      }
-    }
-
-    // Fallback: let JS interpret it in the server's local timezone.
-    return new Date(value);
-  }
-
-  return new Date(value);
+// Convert a date-range bound from a form input into a UTC ISO string comparable
+// against the stored close_at column. Returns null when absent or unparseable.
+function normalizeDateBound(value) {
+  if (!value) return null;
+  const parsed = parseMotionDateTime(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 // Helper: validate vote eligibility
@@ -838,27 +915,25 @@ app.post('/admin/logout', (req, res) => {
 
 // Dashboard
 app.get('/admin/dashboard', requireAuth, (req, res) => {
-  const { start_date, end_date } = req.query;
+  const rawStart = req.query.start_date || '';
+  const rawEnd = req.query.end_date || '';
 
-  let motions;
-  let isFiltered = false;
+  // The filter inputs are local wall-clock values while close_at is stored as a
+  // UTC ISO string, so both bounds have to be converted before comparing --
+  // otherwise "2026-03-01T09:00" is compared lexically against
+  // "2026-03-01T17:00:00.000Z" and matches the wrong day either side of the zone.
+  const startIso = normalizeDateBound(rawStart);
+  const endIso = normalizeDateBound(rawEnd);
 
-  if (start_date && end_date) {
-    // Filter by close_at date range
-    motions = db.prepare(`
-      SELECT * FROM motions
-      WHERE close_at >= ? AND close_at <= ?
-      ORDER BY created_at DESC
-    `).all(start_date, end_date);
-    isFiltered = true;
-  } else {
-    // Default: Last 10 motions
-    motions = db.prepare(`
-      SELECT * FROM motions
-      ORDER BY created_at DESC
-      LIMIT 10
-    `).all();
-  }
+  const conditions = [];
+  const params = [];
+  if (startIso) { conditions.push('close_at >= ?'); params.push(startIso); }
+  if (endIso) { conditions.push('close_at <= ?'); params.push(endIso); }
+
+  const isFiltered = conditions.length > 0;
+  const motions = isFiltered
+    ? db.prepare(`SELECT * FROM motions WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`).all(...params)
+    : db.prepare('SELECT * FROM motions ORDER BY created_at DESC LIMIT 10').all();
 
   const motionsWithStats = motions.map(motion => {
     const stats = getMotionStats(motion.id);
@@ -868,8 +943,12 @@ app.get('/admin/dashboard', requireAuth, (req, res) => {
   res.render('admin_dashboard', {
     motions: motionsWithStats,
     isFiltered,
-    startDate: start_date || null,
-    endDate: end_date || null
+    startDate: rawStart,
+    endDate: rawEnd,
+    isPartialFilter: isFiltered && !(startIso && endIso),
+    isInvertedRange: !!(startIso && endIso && endIso < startIso),
+    success: req.query.success || null,
+    error: req.query.error || null
   });
 });
 
@@ -892,6 +971,13 @@ app.get('/admin/motions/import', requireAuth, (req, res) => {
 });
 
 // Import motions via CSV — process upload
+//
+// A multipart/form-data body is not parsed until multer runs, and multer runs
+// here -- after the global CSRF middleware. That middleware therefore cannot
+// see the _csrf field, so it skips this path (see the exclusion in the CSRF
+// setup) and the token is validated explicitly below, once req.body is
+// populated. The token used to be passed in the query string to work around
+// this, which leaked it into browser history, Referer headers and access logs.
 app.post('/admin/motions/import', requireAuth, (req, res, next) => {
   csvUpload.single('csv_file')(req, res, (uploadErr) => {
     if (uploadErr) {
@@ -902,6 +988,14 @@ app.post('/admin/motions/import', requireAuth, (req, res, next) => {
       return res.render('motion_import', { results: null, error: 'No file uploaded.' });
     }
 
+    doubleCsrfProtection(req, res, (csrfErr) => {
+      if (csrfErr) return next(csrfErr);
+      processUploadedMotions(req, res);
+    });
+  });
+});
+
+function processUploadedMotions(req, res) {
     let rows;
     try {
       rows = parseCSV(req.file.buffer.toString('utf8'), {
@@ -1001,8 +1095,7 @@ app.post('/admin/motions/import', requireAuth, (req, res, next) => {
 
     logger.info('CSV motion import complete', { created: created.length, failed: failed.length });
     res.render('motion_import', { results: { created, failed }, error: null });
-  });
-});
+}
 
 app.get('/admin/motions/new', requireAuth, (req, res) => {
   res.render('motion_new', { error: null });
@@ -1057,32 +1150,6 @@ app.post('/admin/motions', requireAuth, validate(schemas.motion), (req, res) => 
     });
   }
 });
-
-// Helper: convert stored UTC ISO string back to local datetime-local value
-function toDatetimeLocalValue(isoString) {
-  if (!isoString) return '';
-  const date = new Date(isoString);
-  const offsetMinutesRaw = process.env.APP_TIMEZONE_OFFSET_MINUTES;
-  if (offsetMinutesRaw !== undefined && String(offsetMinutesRaw).trim() !== '') {
-    const offsetMinutes = Number(offsetMinutesRaw);
-    if (!Number.isNaN(offsetMinutes)) {
-      const localMs = date.getTime() + (offsetMinutes * 60 * 1000);
-      const d = new Date(localMs);
-      const yyyy = d.getUTCFullYear();
-      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const dd = String(d.getUTCDate()).padStart(2, '0');
-      const hh = String(d.getUTCHours()).padStart(2, '0');
-      const mi = String(d.getUTCMinutes()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-    }
-  }
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mi = String(date.getMinutes()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-}
 
 // Helper: can the motion still be edited (before voting opens)
 function canEditMotion(motion) {
@@ -1166,6 +1233,7 @@ app.get('/admin/motions/:id', requireAuth, (req, res) => {
     stats,
     voterStatus,
     canEdit: canEditMotion(motion),
+    showVoterBreakdown: !!motion.show_voter_breakdown,
     success: req.query.success || null,
     error: req.query.error || null
   });
@@ -1227,6 +1295,35 @@ app.post('/admin/motions/:id/outcome', requireAuth, (req, res) => {
   }
 });
 
+// Toggle whether the unauthenticated public results page lists individual votes.
+app.post('/admin/motions/:id/voter-breakdown', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const motion = motionQueries.getById.get(id);
+  if (!motion) return res.status(404).send('Motion not found');
+
+  const raw = req.body.show_voter_breakdown;
+  const enabled = raw === 'on' || raw === 'true' || raw === '1';
+
+  try {
+    motionQueries.updateShowVoterBreakdown.run(enabled ? 1 : 0, id);
+
+    logger.info('Public voter breakdown visibility updated', {
+      motionId: id,
+      motionRef: motion.motion_ref,
+      enabled,
+      ip: req.ip
+    });
+
+    const message = enabled
+      ? 'Public results will now list each voter and their choice.'
+      : 'Public results will now show aggregate totals only.';
+    res.redirect(`/admin/motions/${id}?success=${encodeURIComponent(message)}`);
+  } catch (err) {
+    logger.error('Failed to update voter breakdown visibility', { motionId: id, error: err.message });
+    res.redirect(`/admin/motions/${id}?error=${encodeURIComponent('Failed to update public results setting')}`);
+  }
+});
+
 // Manually send the results email to everyone who voted plus the property manager
 app.post('/admin/motions/:id/send-results-email', requireAuth, async (req, res) => {
   const { id } = req.params;
@@ -1274,42 +1371,33 @@ app.post('/admin/motions/:id/delete', requireAuth, (req, res) => {
     return res.redirect(`/admin/motions/${id}?error=Only+draft+or+open+motions+can+be+deleted`);
   }
   
+  // Delete children before the parent so foreign keys can stay enabled. This
+  // previously ran with `PRAGMA foreign_keys = OFF` outside a transaction, which
+  // turned off referential integrity for the whole connection (every concurrent
+  // request) and could leave orphaned rows if the process died mid-delete.
+  const purgeMotion = db.transaction((motionId) => {
+    const ballots = db.prepare('DELETE FROM ballots WHERE motion_id = ?').run(motionId).changes;
+    const outbox = db.prepare(`
+      DELETE FROM token_email_outbox
+      WHERE token_id IN (SELECT id FROM voter_tokens WHERE motion_id = ?)
+    `).run(motionId).changes;
+    const tokens = db.prepare('DELETE FROM voter_tokens WHERE motion_id = ?').run(motionId).changes;
+    const notifications = db.prepare('DELETE FROM motion_notifications WHERE motion_id = ?').run(motionId).changes;
+    const motions = db.prepare('DELETE FROM motions WHERE id = ?').run(motionId).changes;
+    return { ballots, outbox, tokens, notifications, motions };
+  });
+
   try {
-    logger.info('Attempting to delete motion', { motionId: id, title: motion.title });
-    
-    // Disable foreign key constraints for this operation
-    db.pragma('foreign_keys = OFF');
-    
-    // Delete voter tokens first using raw SQL to avoid prepared statement issues
-    logger.info('Deleting voter tokens for motion', { motionId: id });
-    const tokenDeleteResult = db.prepare('DELETE FROM voter_tokens WHERE motion_id = ?').run(id);
-    logger.info('Voter tokens deleted', { motionId: id, deletedCount: tokenDeleteResult.changes });
-    
-    // Delete any ballots associated with the motion
-    logger.info('Deleting ballots for motion', { motionId: id });
-    const ballotDeleteResult = db.prepare('DELETE FROM ballots WHERE motion_id = ?').run(id);
-    logger.info('Ballots deleted', { motionId: id, deletedCount: ballotDeleteResult.changes });
-    
-    // Delete the motion
-    logger.info('Deleting motion', { motionId: id });
-    const motionDeleteResult = db.prepare('DELETE FROM motions WHERE id = ?').run(id);
-    logger.info('Motion deleted', { motionId: id, deletedCount: motionDeleteResult.changes });
-    
-    // Re-enable foreign keys
-    db.pragma('foreign_keys = ON');
-    
-    logger.info('Motion deletion completed successfully', { motionId: id, title: motion.title });
-    res.redirect('/admin/dashboard?success=Motion+deleted+successfully');
+    const deleted = purgeMotion(id);
+    logger.info('Motion deletion completed successfully', {
+      motionId: id,
+      title: motion.title,
+      ...deleted
+    });
+    res.redirect('/admin/dashboard?success=' + encodeURIComponent('Motion deleted successfully'));
   } catch (err) {
-    // Ensure foreign keys are re-enabled even on error
-    try {
-      db.pragma('foreign_keys = ON');
-    } catch (e) {
-      // Ignore
-    }
-    
-    logger.error('Motion deletion error:', { 
-      motionId: id, 
+    logger.error('Motion deletion error:', {
+      motionId: id,
       title: motion.title,
       error: err.message,
       stack: err.stack,
@@ -1625,14 +1713,14 @@ app.get('/admin/motions/:id/export.csv', requireAuth, (req, res) => {
 
   for (const ballot of ballots) {
     csv += [
-      ballot.submitted_at,
-      ballot.choice,
-      ballot.recipient_name || '',
-      ballot.recipient_email || '',
-      ballot.unit_number || '',
-      ballot.token_status,
-      ballot.used_at || ''
-    ].map(field => `"${field}"`).join(',') + '\n';
+      csvField(ballot.submitted_at),
+      csvField(ballot.choice),
+      csvField(ballot.recipient_name || ''),
+      csvField(ballot.recipient_email || ''),
+      csvField(ballot.unit_number || ''),
+      csvField(ballot.token_status),
+      csvField(ballot.used_at || '')
+    ].join(',') + '\n';
   }
 
   res.setHeader('Content-Type', 'text/csv');
@@ -1649,8 +1737,20 @@ app.get('/admin/export', requireAuth, (req, res) => {
 app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
   const { start_date, end_date, format } = req.body;
 
+  // Convert both bounds from the input's wall-clock zone into UTC before
+  // comparing against the stored close_at values.
+  const startIso = normalizeDateBound(start_date);
+  const endIso = normalizeDateBound(end_date);
+
   // Validate date range
-  if (new Date(end_date) < new Date(start_date)) {
+  if (!startIso || !endIso) {
+    return res.render('export', {
+      error: 'Please provide a valid start and end date',
+      success: null
+    });
+  }
+
+  if (endIso < startIso) {
     return res.render('export', {
       error: 'End date must be after or equal to start date',
       success: null
@@ -1672,7 +1772,7 @@ app.post('/admin/export', requireAuth, validate(schemas.export), (req, res) => {
     WHERE close_at >= ? AND close_at <= ?
     AND status IN ('Closed', 'Published')
     ORDER BY close_at DESC
-  `).all(start_date, end_date);
+  `).all(startIso, endIso);
 
   if (motions.length === 0) {
     return res.render('export', {
@@ -1709,8 +1809,8 @@ app.get('/admin/settings', requireAuth, (req, res) => {
   const property_manager_name = getSetting('property_manager_name') || '';
   const property_manager_email = getSetting('property_manager_email') || '';
   res.render('admin_settings', {
-    error: null,
-    success: null,
+    error: req.query.error || null,
+    success: req.query.success || null,
     dbPath: db.filename ? db.filename.split('/').pop() : 'SQLite',
     property_manager_name,
     property_manager_email,
@@ -1816,8 +1916,10 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
     return renderAdminSettings(req, res, { error: 'All fields are required' });
   }
   
-  if (new_password.length < 8) {
-    return renderAdminSettings(req, res, { error: 'New password must be at least 8 characters long' });
+  if (new_password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    return renderAdminSettings(req, res, {
+      error: `New password must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters long`
+    });
   }
   
   if (new_password !== confirm_password) {
@@ -1841,18 +1943,51 @@ app.post('/admin/settings/password', requireAuth, (req, res) => {
   // Update the password in real-time
   try {
     updateAdminPassword(new_password, 'admin');
-    
-    logger.info('Admin password changed successfully', {
-      sessionId: req.session.id,
-      ip: req.ip,
-      timestamp: new Date().toISOString()
-    });
-
-    return renderAdminSettings(req, res, { success: 'Password updated successfully!' });
   } catch (err) {
     logger.error('Failed to update admin password:', err);
     return renderAdminSettings(req, res, { error: 'Failed to update password. Please try again.' });
   }
+
+  // Rotate this session's id, then drop every other stored session. The render
+  // afterwards is a redirect rather than a direct render on purpose: the CSRF
+  // token is bound to the session id, and this request's token was minted under
+  // the *old* id, so a freshly-rendered form would carry a token that fails.
+  const ip = req.ip;
+  req.session.regenerate((regenErr) => {
+    if (regenErr) {
+      logger.error('Session regenerate failed after password change', { error: regenErr.message });
+      return res.redirect('/admin/settings?error=' + encodeURIComponent(
+        'Password updated, but your session could not be refreshed. Please log in again.'
+      ));
+    }
+
+    req.session.isAdmin = true;
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        logger.error('Session save failed after password change', { error: saveErr.message });
+        return res.redirect('/admin/settings?error=' + encodeURIComponent(
+          'Password updated, but your session could not be saved. Please log in again.'
+        ));
+      }
+
+      invalidateOtherSessions(req.sessionID, (invErr, destroyed) => {
+        if (invErr) {
+          logger.warn('Could not invalidate other sessions after password change', { error: invErr.message });
+        }
+
+        logger.info('Admin password changed successfully', {
+          ip,
+          otherSessionsDestroyed: destroyed || 0,
+          timestamp: new Date().toISOString()
+        });
+
+        const message = invErr
+          ? 'Password updated successfully. You may want to review active sessions.'
+          : 'Password updated successfully. All other sessions have been signed out.';
+        res.redirect('/admin/settings?success=' + encodeURIComponent(message));
+      });
+    });
+  });
 });
 
 // Test Email Configuration
@@ -1943,14 +2078,27 @@ app.get('/results/:id', (req, res) => {
   const motion = motionQueries.getById.get(id);
 
   if (!motion || !['Closed', 'Published'].includes(motion.status)) {
-    return res.status(404).send('<h1>Results not available.</h1><p>The results for this motion have not been published yet.</p>');
+    return res.status(404).type('html')
+      .send('<h1>Results not available.</h1><p>The results for this motion have not been published yet.</p>');
   }
 
   motion.options = JSON.parse(motion.options_json);
   const stats = getMotionStats(id);
-  const voterStatus = ballotQueries.getVoterStatusByMotion.all(id);
 
-  res.render('public_results', { motion, stats, voterStatus });
+  // The named per-voter breakdown is opt-in per motion. It is off by default
+  // because this page is unauthenticated: anyone holding the link would
+  // otherwise see exactly how each unit voted.
+  const showVoterBreakdown = !!motion.show_voter_breakdown;
+  const voterStatus = showVoterBreakdown ? ballotQueries.getVoterStatusByMotion.all(id) : [];
+
+  // Keep results pages out of search-engine indexes.
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.render('public_results', { motion, stats, voterStatus, showVoterBreakdown });
+});
+
+// Plain robots.txt for crawlers that ignore the header above.
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send('User-agent: *\nDisallow: /admin/\nDisallow: /vote/\nDisallow: /results/\n');
 });
 
 // Health check endpoints (for Coolify/Docker/monitoring)

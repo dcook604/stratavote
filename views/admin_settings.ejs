@@ -37,13 +37,13 @@
 
         <div class="form-group">
           <label for="new_password">New Password</label>
-          <input type="password" id="new_password" name="new_password" required minlength="8">
-          <small class="form-help">Minimum 8 characters</small>
+          <input type="password" id="new_password" name="new_password" required minlength="12">
+          <small class="form-help">Minimum 12 characters</small>
         </div>
 
         <div class="form-group">
           <label for="confirm_password">Confirm New Password</label>
-          <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
+          <input type="password" id="confirm_password" name="confirm_password" required minlength="12">
         </div>
 
         <button type="submit" class="btn btn-primary">Update Password</button>
@@ -122,7 +122,12 @@
         <div class="form-group">
           <label for="imap_authorized_senders">Authorized Senders (comma-separated emails)</label>
           <input type="text" id="imap_authorized_senders" name="imap_authorized_senders" value="<%= imap_authorized_senders || '' %>" placeholder="manager@example.com, president@example.com">
-          <small class="form-help">Only emails from these addresses will create votes. Leave empty to allow any sender.</small>
+          <small class="form-help">
+            Only emails from these addresses can create votes. This list must not be
+            empty &mdash; while it is, the email poller refuses to check the inbox, so
+            no motion will ever be created from email. Messages are left unread and
+            are processed once an address is added here.
+          </small>
         </div>
 
         <div class="form-group">
