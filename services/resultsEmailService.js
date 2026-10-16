@@ -181,7 +181,7 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
 
   // bcc: every participant is a recipient, so nobody should see the others'
   // addresses in the To header.
-  await sendMailFn({
+  const info = await sendMailFn({
     to: recipients,
     bcc: true,
     subject: content.subject,
@@ -189,13 +189,20 @@ async function sendResultsEmailForMotion({ motionId, baseUrl, sendMailFn, force 
     html: content.html
   });
 
+  // Report what the SMTP server actually accepted, not what we asked it to
+  // accept -- these differ when an address is rejected.
+  const accepted = info && Array.isArray(info.accepted) && info.accepted.length > 0
+    ? info.accepted.length
+    : recipients.length;
+
   logger.info('results email sent', {
     motionId,
     motionRef: motion.motion_ref,
-    recipientCount: recipients.length
+    recipientCount: accepted,
+    intendedRecipientCount: recipients.length
   });
 
-  return { sent: true, skipped: false, recipientCount: recipients.length };
+  return { sent: true, skipped: false, recipientCount: accepted };
 }
 
 module.exports = {

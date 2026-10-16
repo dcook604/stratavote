@@ -12,7 +12,10 @@ function isEmailConfigured() {
 }
 
 function normalizeAddresses(value) {
-  if (!value) return [];
+  // Booleans are control flags, not addresses. `bcc: true` means "blind-copy the
+  // `to` list"; stringifying it would yield the bogus address "true", which
+  // silently replaces the real recipients and is then dropped by nodemailer.
+  if (!value || typeof value === 'boolean') return [];
   const list = Array.isArray(value) ? value : String(value).split(',');
   return list.map(a => (a || '').trim()).filter(Boolean);
 }
@@ -61,7 +64,25 @@ async function sendGenericEmail({ to, bcc, subject, text, html }) {
     mail.bcc = recipients.join(', ');
   }
 
-  await transporter.sendMail(mail);
+  const info = await transporter.sendMail(mail);
+
+  // A 250 OK does not mean every recipient was accepted -- nodemailer reports
+  // the envelope verdict separately. Surface it so a silently-dropped address
+  // is never logged as delivered.
+  const rejected = info.rejected || [];
+  const accepted = (info.accepted || []).length;
+  if (accepted === 0) {
+    throw new Error(`SMTP accepted no recipients (rejected: ${rejected.join(', ') || 'none'})`);
+  }
+  if (rejected.length > 0) {
+    logger.warn('Some email recipients were rejected by the SMTP server', {
+      subject,
+      accepted,
+      rejected
+    });
+  }
+
+  return info;
 }
 
 // Create transporter (lazy initialization)
